@@ -1,0 +1,9 @@
+from django.urls import path
+
+from apps.orders import views
+
+
+urlpatterns = [
+    path("", views.ClientHomeView.as_view(), name="client-home"),
+    path("recent-orders/", views.ClientRecentOrdersView.as_view(), name="client-recent-orders"),
+]

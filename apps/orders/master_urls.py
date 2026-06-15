@@ -1,0 +1,13 @@
+from django.urls import path
+
+from apps.orders import views
+
+
+urlpatterns = [
+    path("", views.MasterOrderListView.as_view(), name="master-orders"),
+    path("<uuid:pk>/", views.MasterOrderDetailView.as_view(), name="master-order-detail"),
+    path("<uuid:pk>/accept/", views.MasterOrderAcceptView.as_view(), name="master-order-accept"),
+    path("<uuid:pk>/reject/", views.MasterOrderRejectView.as_view(), name="master-order-reject"),
+    path("<uuid:pk>/complete/", views.MasterOrderCompleteView.as_view(), name="master-order-complete"),
+    path("<uuid:pk>/track/", views.MasterOrderTrackView.as_view(), name="master-order-track"),
+]
