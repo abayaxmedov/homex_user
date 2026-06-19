@@ -34,7 +34,7 @@ echo "==> Starting Gunicorn (uvicorn worker)..."
 exec gunicorn config.asgi:application \
     --worker-class uvicorn.workers.UvicornWorker \
     --workers "${GUNICORN_WORKERS:-4}" \
-    --bind 0.0.0.0:8000 \
+    --bind "0.0.0.0:${BACKEND_PORT:-8000}" \
     --timeout 120 \
     --keep-alive 5 \
     --access-logfile -
