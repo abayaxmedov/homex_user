@@ -1,0 +1,62 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-homex}
+      POSTGRES_USER: ${POSTGRES_USER:-homex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-homex}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: homex_user:latest
+    restart: unless-stopped
+    entrypoint: /app/docker/entrypoint.sh
+    env_file: .env
+    ports:
+      # Bind only to localhost — Nginx on the host proxies here
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - /srv/homex/staticfiles:/app/staticfiles
+      - /srv/homex/media:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: homex_user:latest
+    restart: unless-stopped
+    entrypoint: /app/docker/celery.sh
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
