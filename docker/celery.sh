@@ -43,5 +43,7 @@ else:
     raise SystemExit(1)
 PYEOF
 
+export DJANGO_SETTINGS_MODULE=config.settings
+
 echo "==> Starting Celery worker..."
 exec celery -A config.celery worker -l info --concurrency 4

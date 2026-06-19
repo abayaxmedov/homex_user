@@ -30,6 +30,8 @@ python manage.py migrate --noinput
 echo "==> Collecting static files..."
 python manage.py collectstatic --noinput --clear
 
+export DJANGO_SETTINGS_MODULE=config.settings
+
 echo "==> Starting Gunicorn (uvicorn worker)..."
 exec gunicorn config.asgi:application \
     --worker-class uvicorn.workers.UvicornWorker \
