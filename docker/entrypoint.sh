@@ -31,6 +31,7 @@ echo "==> Collecting static files..."
 python manage.py collectstatic --noinput --clear
 
 export DJANGO_SETTINGS_MODULE=config.settings
+export PYTHONPATH=/app
 
 echo "==> Starting Gunicorn (uvicorn worker)..."
 exec gunicorn config.asgi:application \
@@ -39,4 +40,5 @@ exec gunicorn config.asgi:application \
     --bind "0.0.0.0:${BACKEND_PORT:-8000}" \
     --timeout 120 \
     --keep-alive 5 \
-    --access-logfile -
+    --access-logfile - \
+    --error-logfile -
