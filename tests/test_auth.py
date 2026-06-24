@@ -1,5 +1,6 @@
 from django.core.cache import cache
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from apps.accounts.models import OTPRecord
 from apps.accounts.serializers import SendOTPSerializer, VerifyOTPSerializer
@@ -40,3 +41,17 @@ def test_otp_blocks_after_five_wrong_attempts(settings, db):
         assert not serializer.is_valid()
 
     assert cache.get(f"otp:block:{phone}") is True
+
+
+def test_bearer_token_takes_precedence_over_admin_session(django_admin_user, client_user):
+    api = APIClient()
+    assert api.login(username=django_admin_user.username, password="admin")
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {issue_role_tokens(client_user, 'client')['access_token']}")
+
+    response = api.patch(
+        "/api/v1/client/auth/register/",
+        {"first_name": "Ali", "last_name": "Valiyev", "language": "uz"},
+        format="json",
+    )
+
+    assert response.status_code == 200
