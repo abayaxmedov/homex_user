@@ -154,7 +154,16 @@ class RefreshSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         refresh = RefreshToken(validated_data["refresh_token"])
-        return {"access_token": str(refresh.access_token)}
+        role = refresh.get("role")
+        subject_id = refresh.get("sub")
+        model = Master if role == "master" else Client if role == "client" else None
+        if not model or not subject_id:
+            raise serializers.ValidationError("Refresh token role is invalid")
+        try:
+            subject = model.objects.get(id=subject_id, is_active=True)
+        except model.DoesNotExist as exc:
+            raise serializers.ValidationError("Token user not found") from exc
+        return issue_role_tokens(subject, role)
 
 
 class LogoutSerializer(serializers.Serializer):

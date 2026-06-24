@@ -6,11 +6,11 @@ from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 
 def issue_role_tokens(subject, role):
-    access_minutes = settings.MASTER_ACCESS_MINUTES if role == "master" else settings.CLIENT_ACCESS_MINUTES
+    access_days = settings.MASTER_ACCESS_DAYS if role == "master" else settings.CLIENT_ACCESS_DAYS
     refresh_days = settings.MASTER_REFRESH_DAYS if role == "master" else settings.CLIENT_REFRESH_DAYS
 
     access = AccessToken()
-    access.set_exp(from_time=timezone.now(), lifetime=timedelta(minutes=access_minutes))
+    access.set_exp(from_time=timezone.now(), lifetime=timedelta(days=access_days))
     access["sub"] = str(subject.id)
     access["role"] = role
     access["phone"] = subject.phone
@@ -23,5 +23,5 @@ def issue_role_tokens(subject, role):
     return {
         "access_token": str(access),
         "refresh_token": str(refresh),
-        "expires_in": access_minutes * 60,
+        "expires_in": access_days * 24 * 60 * 60,
     }

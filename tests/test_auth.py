@@ -13,8 +13,24 @@ def test_role_tokens_include_role(master, client_user):
 
     assert master_tokens["access_token"]
     assert client_tokens["access_token"]
-    assert master_tokens["expires_in"] == 15 * 60
-    assert client_tokens["expires_in"] == 60 * 60
+    assert master_tokens["expires_in"] == 3 * 24 * 60 * 60
+    assert client_tokens["expires_in"] == 3 * 24 * 60 * 60
+
+
+def test_refresh_returns_new_access_and_refresh_tokens(client_user):
+    api = APIClient()
+    tokens = issue_role_tokens(client_user, "client")
+
+    response = api.post(
+        "/api/v1/client/auth/refresh/",
+        {"refresh_token": tokens["refresh_token"]},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["data"]["access_token"]
+    assert response.data["data"]["refresh_token"]
+    assert response.data["data"]["expires_in"] == 3 * 24 * 60 * 60
 
 
 def test_otp_send_and_verify_creates_client(db):
