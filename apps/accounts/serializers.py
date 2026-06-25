@@ -46,6 +46,9 @@ class MasterSummarySerializer(serializers.ModelSerializer):
 
 
 class ClientSerializer(serializers.ModelSerializer):
+    current_tariff = serializers.SerializerMethodField()
+    addresses_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Client
         fields = (
@@ -59,10 +62,26 @@ class ClientSerializer(serializers.ModelSerializer):
             "push_enabled",
             "current_tariff",
             "tariff_expires_at",
+            "addresses_count",
             "total_spent",
             "total_orders",
         )
-        read_only_fields = ("phone", "total_spent", "total_orders", "current_tariff", "tariff_expires_at")
+        read_only_fields = (
+            "phone",
+            "total_spent",
+            "total_orders",
+            "current_tariff",
+            "tariff_expires_at",
+            "addresses_count",
+        )
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_current_tariff(self, obj):
+        return obj.current_tariff.name if obj.current_tariff else None
+
+    @extend_schema_field(serializers.IntegerField)
+    def get_addresses_count(self, obj):
+        return obj.addresses.count()
 
 
 class MasterProfileSerializer(serializers.ModelSerializer):

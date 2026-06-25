@@ -231,3 +231,4 @@ class MapConfigSerializer(serializers.Serializer):
     default_center = serializers.DictField()
     default_zoom = serializers.IntegerField()
     tracking_ws_template = serializers.CharField()
+    auth_header = serializers.CharField()
