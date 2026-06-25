@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -14,10 +15,34 @@ from apps.integrations.adapters import SMSClient
 
 class MasterSummarySerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
+    distance_km = serializers.SerializerMethodField()
+    eta_minutes = serializers.SerializerMethodField()
 
     class Meta:
         model = Master
-        fields = ("id", "full_name", "phone", "specialization", "avatar", "rating", "is_online")
+        fields = (
+            "id",
+            "full_name",
+            "phone",
+            "specialization",
+            "avatar",
+            "rating",
+            "is_online",
+            "is_available",
+            "lat",
+            "lng",
+            "last_location_at",
+            "distance_km",
+            "eta_minutes",
+        )
+
+    @extend_schema_field(serializers.FloatField(allow_null=True))
+    def get_distance_km(self, obj):
+        return getattr(obj, "distance_km", None)
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_eta_minutes(self, obj):
+        return getattr(obj, "eta_minutes", None)
 
 
 class ClientSerializer(serializers.ModelSerializer):
@@ -55,11 +80,15 @@ class MasterProfileSerializer(serializers.ModelSerializer):
             "avatar",
             "rating",
             "is_online",
+            "is_available",
+            "lat",
+            "lng",
+            "last_location_at",
             "language",
             "notifications_enabled",
             "push_enabled",
         )
-        read_only_fields = ("phone", "rating")
+        read_only_fields = ("phone", "rating", "lat", "lng", "last_location_at")
 
 
 class MasterLoginSerializer(serializers.Serializer):

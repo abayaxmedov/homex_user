@@ -156,7 +156,7 @@ class MasterSettingsView(generics.GenericAPIView):
     serializer_class = MasterProfileSerializer
 
     def patch(self, request):
-        allowed = {"notifications_enabled", "push_enabled", "is_online"}
+        allowed = {"notifications_enabled", "push_enabled", "is_online", "is_available"}
         for field in allowed:
             if field in request.data:
                 setattr(request.user, field, request.data[field])

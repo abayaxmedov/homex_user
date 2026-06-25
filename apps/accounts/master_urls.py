@@ -16,6 +16,7 @@ urlpatterns = [
     path("auth/", include(auth_patterns)),
     path("home/", include("apps.orders.master_home_urls")),
     path("orders/", include("apps.orders.master_urls")),
+    path("tracking/", include("apps.orders.master_tracking_urls")),
     path("wallet/", include("apps.wallet.master_wallet_urls")),
     path("expenses/", include("apps.wallet.master_expense_urls")),
     path("inventory/", include("apps.warehouse.master_urls")),

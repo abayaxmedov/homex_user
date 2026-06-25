@@ -54,10 +54,26 @@ class WalletStatsView(generics.GenericAPIView):
     serializer_class = WalletTransactionSerializer
 
     def get(self, request):
+        wallet, _ = MasterWallet.objects.get_or_create(master=request.user)
         total = WalletTransaction.objects.filter(master=request.user, transaction_type=WalletTransaction.IN).aggregate(
             amount=Sum("amount")
         )["amount"] or 0
-        return success_response({"total_income": total})
+        recent = WalletTransaction.objects.filter(master=request.user)[:5]
+        pending_withdraw = WithdrawRequest.objects.filter(
+            master=request.user, status=WithdrawRequest.PENDING
+        ).aggregate(amount=Sum("amount"))["amount"] or 0
+        return success_response(
+            {
+                "total_income": total,
+                "balance_online": wallet.balance_online,
+                "balance_cash": wallet.balance_cash,
+                "total_earned": wallet.total_earned,
+                "total_withdrawn": wallet.total_withdrawn,
+                "pending_withdraw": pending_withdraw,
+                "withdrawable": wallet.balance_cash,
+                "recent_transactions": WalletTransactionSerializer(recent, many=True).data,
+            }
+        )
 
 
 @extend_schema_view(get=extend_schema(tags=["Master Expenses"]), post=extend_schema(tags=["Master Expenses"]))

@@ -5,6 +5,7 @@ from apps.accounts.permissions import IsClient, IsMaster
 from apps.common.views import EnvelopeMixin
 from apps.support.models import SupportMessage
 from apps.support.serializers import SupportMessageSerializer
+from apps.support.services import broadcast_support_message
 
 
 class BaseSupportListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
@@ -19,9 +20,10 @@ class BaseSupportListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         if getattr(self.request.user, "role", None) == "master":
-            serializer.save(sender_role="master", master=self.request.user)
+            message = serializer.save(sender_role="master", master=self.request.user)
         else:
-            serializer.save(sender_role="client", client=self.request.user)
+            message = serializer.save(sender_role="client", client=self.request.user)
+        broadcast_support_message(message)
 
 
 @extend_schema_view(get=extend_schema(tags=["Master Support"]), post=extend_schema(tags=["Master Support"]))

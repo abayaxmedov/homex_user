@@ -14,16 +14,24 @@ class MarketProductListView(EnvelopeMixin, generics.ListAPIView):
     serializer_class = MarketProductSerializer
 
     def get_queryset(self):
-        queryset = MarketProduct.objects.filter(is_active=True, is_moderated=True)
+        queryset = MarketProduct.objects.filter(is_active=True, is_moderated=True).select_related(
+            "category", "seller"
+        ).prefetch_related("images")
         category = self.request.query_params.get("category")
         search = self.request.query_params.get("search")
         condition = self.request.query_params.get("condition")
+        min_price = self.request.query_params.get("min_price")
+        max_price = self.request.query_params.get("max_price")
         if category:
             queryset = queryset.filter(category_id=category)
         if condition:
             queryset = queryset.filter(condition=condition)
         if search:
             queryset = queryset.filter(name__icontains=search)
+        if min_price:
+            queryset = queryset.filter(price__gte=min_price)
+        if max_price:
+            queryset = queryset.filter(price__lte=max_price)
         return queryset
 
 
@@ -33,7 +41,9 @@ class MarketProductDetailView(EnvelopeMixin, generics.RetrieveAPIView):
     serializer_class = MarketProductSerializer
 
     def get_queryset(self):
-        return MarketProduct.objects.filter(is_active=True, is_moderated=True)
+        return MarketProduct.objects.filter(is_active=True, is_moderated=True).select_related(
+            "category", "seller"
+        ).prefetch_related("images")
 
 
 @extend_schema_view(get=extend_schema(tags=["Client Market"]), post=extend_schema(tags=["Client Market"]))

@@ -66,6 +66,21 @@ class OrderInventoryUsage(TimeStampedUUIDModel):
         super().save(*args, **kwargs)
 
 
+class OrderTracking(TimeStampedUUIDModel):
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="tracking")
+    master_lat = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
+    master_lng = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
+    distance_km = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    eta_minutes = models.PositiveIntegerField(null=True, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("-updated_at",)
+
+    def __str__(self):
+        return f"{self.order_id} tracking"
+
+
 class Review(TimeStampedUUIDModel):
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="review")
     master = models.ForeignKey("accounts.Master", on_delete=models.CASCADE, related_name="reviews")

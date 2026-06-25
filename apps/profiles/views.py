@@ -5,6 +5,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics
 
 from apps.accounts.permissions import IsClient, IsMaster
+from apps.accounts.serializers import ClientSerializer
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.orders.models import Order
@@ -113,7 +114,7 @@ class TariffSubscribeView(generics.GenericAPIView):
         request.user.current_tariff = tariff
         request.user.tariff_expires_at = timezone.now() + timedelta(days=tariff.duration_days)
         request.user.save(update_fields=["current_tariff", "tariff_expires_at"])
-        return success_response(TariffSerializer(tariff).data)
+        return success_response({"tariff": TariffSerializer(tariff).data, "client": ClientSerializer(request.user).data})
 
 
 @extend_schema_view(get=extend_schema(tags=["Master Profile"]), post=extend_schema(tags=["Master Profile"]))

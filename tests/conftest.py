@@ -7,6 +7,7 @@ from apps.accounts.tokens import issue_role_tokens
 @pytest.fixture(autouse=True)
 def locmem_cache(settings):
     settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "tests"}}
+    settings.CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
     settings.SECRET_KEY = "test-secret-key-with-enough-length-for-jwt"
     settings.SIMPLE_JWT["SIGNING_KEY"] = settings.SECRET_KEY
 

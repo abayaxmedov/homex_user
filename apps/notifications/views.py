@@ -6,6 +6,7 @@ from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.notifications.models import Notification
 from apps.notifications.serializers import NotificationSerializer
+from apps.notifications.services import broadcast_notification, broadcast_notification_read_all
 
 
 class NotificationListView(EnvelopeMixin, generics.ListAPIView):
@@ -26,6 +27,7 @@ class NotificationReadView(generics.GenericAPIView):
         notification = self.get_queryset().get(pk=pk)
         notification.is_read = True
         notification.save(update_fields=["is_read"])
+        broadcast_notification(notification, event_type="notification.read")
         return success_response(NotificationSerializer(notification).data)
 
     def get_queryset(self):
@@ -42,8 +44,10 @@ class NotificationReadAllView(generics.GenericAPIView):
     def patch(self, request):
         if getattr(request.user, "role", None) == "master":
             Notification.objects.filter(master=request.user).update(is_read=True)
+            broadcast_notification_read_all("master", request.user.id)
         else:
             Notification.objects.filter(client=request.user).update(is_read=True)
+            broadcast_notification_read_all("client", request.user.id)
         return success_response(message="All notifications marked as read")
 
 
@@ -52,6 +56,9 @@ MasterNotificationListView = extend_schema_view(get=extend_schema(tags=["Master 
 )
 MasterNotificationReadView = extend_schema_view(patch=extend_schema(tags=["Master Notifications"]))(
     type("MasterNotificationReadView", (NotificationReadView,), {"permission_classes": [IsMaster]})
+)
+MasterNotificationReadAllView = extend_schema_view(patch=extend_schema(tags=["Master Notifications"]))(
+    type("MasterNotificationReadAllView", (NotificationReadAllView,), {"permission_classes": [IsMaster]})
 )
 ClientNotificationListView = extend_schema_view(get=extend_schema(tags=["Client Notifications"]))(
     type("ClientNotificationListView", (NotificationListView,), {"permission_classes": [IsClient]})

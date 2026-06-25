@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.orders.models import Order, OrderInventoryUsage, Review, ReviewPhoto
+from apps.orders.models import Order, OrderInventoryUsage, OrderTracking, Review, ReviewPhoto
 
 
 class OrderInventoryUsageInline(admin.TabularInline):
@@ -19,6 +19,12 @@ class OrderAdmin(admin.ModelAdmin):
 @admin.register(OrderInventoryUsage)
 class OrderInventoryUsageAdmin(admin.ModelAdmin):
     list_display = ("order", "inventory", "quantity", "unit_price", "total_price")
+
+
+@admin.register(OrderTracking)
+class OrderTrackingAdmin(admin.ModelAdmin):
+    list_display = ("order", "master_lat", "master_lng", "distance_km", "eta_minutes", "updated_at")
+    search_fields = ("order__client__phone", "order__master__phone", "order__address_text")
 
 
 class ReviewPhotoInline(admin.TabularInline):

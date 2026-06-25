@@ -12,9 +12,18 @@ class ClientAdmin(admin.ModelAdmin):
 
 @admin.register(Master)
 class MasterAdmin(admin.ModelAdmin):
-    list_display = ("phone", "full_name", "specialization", "rating", "is_online", "is_active")
+    list_display = (
+        "phone",
+        "full_name",
+        "specialization",
+        "rating",
+        "is_online",
+        "is_available",
+        "last_location_at",
+        "is_active",
+    )
     search_fields = ("phone", "first_name", "last_name", "specialization")
-    list_filter = ("is_online", "is_active", "language")
+    list_filter = ("is_online", "is_available", "is_active", "language")
 
 
 @admin.register(OTPRecord)

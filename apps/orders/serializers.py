@@ -1,10 +1,11 @@
 from django.db import transaction
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.accounts.models import Master
 from apps.accounts.serializers import MasterSummarySerializer
 from apps.integrations.adapters import PaymentClient
-from apps.orders.models import Order, OrderInventoryUsage, OrderStatus, PaymentType, Review, ReviewPhoto
+from apps.orders.models import Order, OrderInventoryUsage, OrderStatus, OrderTracking, PaymentType, Review, ReviewPhoto
 from apps.services.serializers import ServiceSerializer
 from apps.wallet.models import MasterWallet, WalletTransaction
 from apps.warehouse.models import MasterInventory
@@ -19,10 +20,22 @@ class OrderInventoryUsageSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "product_name", "total_price")
 
 
+class OrderTrackingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderTracking
+        fields = ("master_lat", "master_lng", "distance_km", "eta_minutes", "updated_at")
+        read_only_fields = fields
+
+
 class OrderSerializer(serializers.ModelSerializer):
     service_detail = ServiceSerializer(source="service", read_only=True)
     master_detail = MasterSummarySerializer(source="master", read_only=True)
     inventory_usages = OrderInventoryUsageSerializer(many=True, read_only=True)
+    tracking = OrderTrackingSerializer(read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    payment_type_label = serializers.CharField(source="get_payment_type_display", read_only=True)
+    can_cancel = serializers.SerializerMethodField()
+    can_rate = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -41,7 +54,9 @@ class OrderSerializer(serializers.ModelSerializer):
             "scheduled_time",
             "note",
             "status",
+            "status_label",
             "payment_type",
+            "payment_type_label",
             "service_fee",
             "inventory_total",
             "bonus_used",
@@ -50,6 +65,9 @@ class OrderSerializer(serializers.ModelSerializer):
             "cancel_reason",
             "rejected_reason",
             "inventory_usages",
+            "tracking",
+            "can_cancel",
+            "can_rate",
             "created_at",
         )
         read_only_fields = (
@@ -62,6 +80,14 @@ class OrderSerializer(serializers.ModelSerializer):
             "total_amount",
             "created_at",
         )
+
+    @extend_schema_field(serializers.BooleanField)
+    def get_can_cancel(self, obj):
+        return obj.status in {OrderStatus.NEW, OrderStatus.ACCEPTED}
+
+    @extend_schema_field(serializers.BooleanField)
+    def get_can_rate(self, obj):
+        return obj.status == OrderStatus.COMPLETED and not hasattr(obj, "review")
 
     def create(self, validated_data):
         service = validated_data["service"]
@@ -160,7 +186,48 @@ class PaymentStartSerializer(serializers.Serializer):
 
 class NearbyMasterSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
+    distance_km = serializers.SerializerMethodField()
+    eta_minutes = serializers.SerializerMethodField()
 
     class Meta:
         model = Master
-        fields = ("id", "full_name", "specialization", "avatar", "rating", "is_online")
+        fields = (
+            "id",
+            "full_name",
+            "specialization",
+            "avatar",
+            "rating",
+            "is_online",
+            "is_available",
+            "lat",
+            "lng",
+            "last_location_at",
+            "distance_km",
+            "eta_minutes",
+        )
+
+    @extend_schema_field(serializers.FloatField(allow_null=True))
+    def get_distance_km(self, obj):
+        return getattr(obj, "distance_km", None)
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_eta_minutes(self, obj):
+        return getattr(obj, "eta_minutes", None)
+
+
+class MasterLocationSerializer(serializers.Serializer):
+    lat = serializers.DecimalField(max_digits=10, decimal_places=8)
+    lng = serializers.DecimalField(max_digits=11, decimal_places=8)
+    is_online = serializers.BooleanField(required=False, default=True)
+    is_available = serializers.BooleanField(required=False, default=True)
+    order_id = serializers.UUIDField(required=False)
+    distance_km = serializers.DecimalField(max_digits=8, decimal_places=2, required=False)
+    eta_minutes = serializers.IntegerField(required=False, min_value=1)
+
+
+class MapConfigSerializer(serializers.Serializer):
+    provider = serializers.CharField()
+    google_maps_api_key = serializers.CharField(allow_blank=True)
+    default_center = serializers.DictField()
+    default_zoom = serializers.IntegerField()
+    tracking_ws_template = serializers.CharField()
