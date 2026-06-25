@@ -54,7 +54,11 @@ def tracking_payload(order):
         },
         "distance_km": calculated_distance,
         "eta_minutes": calculated_eta,
-        "websocket": {"client_track": f"/ws/client/track/{order.id}/", "master_tracking": "/ws/master/tracking/"},
+        "websocket": {
+            "client_track": f"/ws/client/track/{order.id}/",
+            "master_tracking": "/ws/master/tracking/",
+            "auth_header": "Authorization: Bearer {access_token}",
+        },
     }
 
 
@@ -102,6 +106,7 @@ class MasterHomeStatsView(generics.GenericAPIView):
                 "tracking": "/ws/master/tracking/",
                 "notifications": "/ws/master/notifications/",
                 "support": "/ws/master/support/",
+                "auth_header": "Authorization: Bearer {access_token}",
             },
         }
         return success_response(data)
@@ -243,7 +248,10 @@ class MasterLocationUpdateView(generics.GenericAPIView):
 
         response = {
             "master": MasterSummarySerializer(request.user).data,
-            "websocket": {"tracking": "/ws/master/tracking/?token={access_token}"},
+            "websocket": {
+                "tracking": "/ws/master/tracking/",
+                "auth_header": "Authorization: Bearer {access_token}",
+            },
         }
         order_id = data.get("order_id")
         if order_id:
@@ -321,6 +329,7 @@ class ClientHomeView(generics.GenericAPIView):
                 "websocket": {
                     "notifications": "/ws/client/notifications/",
                     "support": "/ws/client/support/",
+                    "auth_header": "Authorization: Bearer {access_token}",
                 },
             }
         )
@@ -338,7 +347,8 @@ class ClientMapConfigView(generics.GenericAPIView):
                 "google_maps_api_key": settings.GOOGLE_MAPS_API_KEY,
                 "default_center": {"lat": 41.311081, "lng": 69.240562},
                 "default_zoom": 14,
-                "tracking_ws_template": "/ws/client/track/{order_id}/?token={access_token}",
+                "tracking_ws_template": "/ws/client/track/{order_id}/",
+                "auth_header": "Authorization: Bearer {access_token}",
             }
         )
 

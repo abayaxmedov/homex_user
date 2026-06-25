@@ -5,6 +5,8 @@ from channels.layers import get_channel_layer
 from django.urls import reverse
 
 from apps.accounts.models import Master
+from apps.accounts.tokens import issue_role_tokens
+from apps.accounts.ws_auth import RoleJWTAuthMiddleware
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification, notification_group
 from apps.orders.models import Order, OrderStatus, OrderTracking
@@ -132,4 +134,29 @@ def test_client_home_and_map_config_are_frontend_ready(client_api):
     assert "websocket" in home_response.data["data"]
     assert "quick_actions" in home_response.data["data"]
     assert map_response.status_code == 200
-    assert map_response.data["data"]["tracking_ws_template"] == "/ws/client/track/{order_id}/?token={access_token}"
+    assert map_response.data["data"]["tracking_ws_template"] == "/ws/client/track/{order_id}/"
+    assert map_response.data["data"]["auth_header"] == "Authorization: Bearer {access_token}"
+
+
+def test_websocket_auth_reads_authorization_header_not_query(master):
+    captured = {}
+
+    async def app(scope, receive, send):
+        captured["user"] = scope["user"]
+
+    middleware = RoleJWTAuthMiddleware(app)
+    token = issue_role_tokens(master, "master")["access_token"]
+
+    async_to_sync(middleware)(
+        {"headers": [(b"authorization", f"Bearer {token}".encode())], "query_string": b""},
+        None,
+        None,
+    )
+    assert captured["user"] == master
+
+    async_to_sync(middleware)(
+        {"headers": [], "query_string": f"token={token}".encode()},
+        None,
+        None,
+    )
+    assert captured["user"] is None

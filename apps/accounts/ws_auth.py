@@ -1,5 +1,3 @@
-from urllib.parse import parse_qs
-
 from channels.db import database_sync_to_async
 from rest_framework_simplejwt.tokens import AccessToken
 
@@ -24,7 +22,9 @@ class RoleJWTAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        query = parse_qs(scope.get("query_string", b"").decode())
-        token = (query.get("token") or [None])[0]
+        headers = dict(scope.get("headers") or [])
+        auth_header = headers.get(b"authorization", b"").decode()
+        parts = auth_header.split()
+        token = parts[1] if len(parts) == 2 and parts[0].lower() == "bearer" else None
         scope["user"] = await get_role_user(token) if token else None
         return await self.app(scope, receive, send)

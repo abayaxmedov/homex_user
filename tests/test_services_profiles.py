@@ -72,6 +72,32 @@ def test_tariff_subscription_updates_client(client_api, client_user):
     assert client_user.tariff_expires_at is not None
 
 
+def test_client_profile_returns_tariff_name_and_address_count(client_api, client_user):
+    tariff = Tariff.objects.create(name="Premium", price=50000, duration_days=30)
+    client_user.current_tariff = tariff
+    client_user.save(update_fields=["current_tariff"])
+    ClientAddress.objects.create(
+        client=client_user,
+        label="Uy",
+        address_text="Chilonzor",
+        lat="41.30000000",
+        lng="69.25000000",
+    )
+    ClientAddress.objects.create(
+        client=client_user,
+        label="Ish",
+        address_text="Yunusobod",
+        lat="41.33000000",
+        lng="69.28000000",
+    )
+
+    response = client_api.get(reverse("client-profile"))
+
+    assert response.status_code == 200
+    assert response.data["data"]["current_tariff"] == "Premium"
+    assert response.data["data"]["addresses_count"] == 2
+
+
 def test_master_documents_and_privacy_policy(master_api, master):
     certificate = MasterCertificate.objects.create(master=master, title="HVAC", file="certificates/hvac.pdf")
     document = MasterDocument.objects.create(master=master, title="Passport", file="documents/passport.pdf")
