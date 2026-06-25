@@ -6,6 +6,7 @@ from django.core.cache import cache
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import Client, FCMDevice, Language, Master, OTPRecord
@@ -182,7 +183,10 @@ class RefreshSerializer(serializers.Serializer):
     refresh_token = serializers.CharField()
 
     def create(self, validated_data):
-        refresh = RefreshToken(validated_data["refresh_token"])
+        try:
+            refresh = RefreshToken(validated_data["refresh_token"])
+        except TokenError as exc:
+            raise serializers.ValidationError({"refresh_token": str(exc)})
         role = refresh.get("role")
         subject_id = refresh.get("sub")
         model = Master if role == "master" else Client if role == "client" else None
