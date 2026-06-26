@@ -2,7 +2,7 @@ from django.core.cache import cache
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.accounts.models import OTPRecord
+from apps.accounts.models import Client, Master, OTPRecord
 from apps.accounts.serializers import SendOTPSerializer, VerifyOTPSerializer
 from apps.accounts.tokens import issue_role_tokens
 
@@ -71,3 +71,17 @@ def test_bearer_token_takes_precedence_over_admin_session(django_admin_user, cli
     )
 
     assert response.status_code == 200
+
+
+def test_client_delete_account_hard_deletes_user(client_api, client_user):
+    response = client_api.delete("/api/v1/client/auth/delete-account/")
+
+    assert response.status_code == 200
+    assert not Client.objects.filter(id=client_user.id).exists()
+
+
+def test_master_delete_account_hard_deletes_user(master_api, master):
+    response = master_api.delete("/api/v1/master/auth/delete-account/")
+
+    assert response.status_code == 200
+    assert not Master.objects.filter(id=master.id).exists()
