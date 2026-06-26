@@ -1,4 +1,4 @@
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiExample, extend_schema, extend_schema_view
 from rest_framework import generics, permissions
 
 from apps.accounts.models import Client, FCMDevice, Master
@@ -19,7 +19,56 @@ from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 
 
-@extend_schema(tags=["Master Auth"])
+CLIENT_PROFILE_RESPONSE_EXAMPLE = {
+    "success": True,
+    "message": "OK",
+    "data": {
+        "id": "8df2d8b5-2e3b-4d6e-8a1c-3e8f54d2e3a1",
+        "phone": "+998901234567",
+        "first_name": "Aziz",
+        "last_name": "Karimov",
+        "avatar": None,
+        "language": "uz",
+        "notifications_enabled": True,
+        "push_enabled": True,
+        "current_tariff": "Premium",
+        "tariff_expires_at": "2026-07-25T10:00:00+05:00",
+        "addresses_count": 3,
+        "total_spent": "0.00",
+        "total_orders": 0,
+    },
+}
+
+
+@extend_schema(
+    tags=["Master Auth"],
+    summary="Master login",
+    description=(
+        "Master phone + password orqali login qiladi. Response ichidagi `access_token` ni Swagger Authorize "
+        "oynasiga kiriting. `refresh_token` 15 kunlik va refresh endpointda yangi tokenlar olish uchun ishlatiladi."
+    ),
+    examples=[
+        OpenApiExample(
+            "Master login request",
+            value={"phone": "+998901112233", "password": "1234"},
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Master login success",
+            value={
+                "success": True,
+                "message": "OK",
+                "data": {
+                    "access_token": "eyJ...",
+                    "refresh_token": "eyJ...",
+                    "expires_in": 259200,
+                    "master": {"id": "uuid", "full_name": "Ali Usta", "phone": "+998901112233"},
+                },
+            },
+            response_only=True,
+        ),
+    ],
+)
 class MasterLoginView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
@@ -31,7 +80,12 @@ class MasterLoginView(generics.GenericAPIView):
         return success_response(serializer.save())
 
 
-@extend_schema(tags=["Master Auth"])
+@extend_schema(
+    tags=["Master Auth"],
+    summary="Master access tokenni yangilash",
+    description="Eski `refresh_token` yuboriladi. Response yangi `access_token` va yangi `refresh_token` qaytaradi.",
+    examples=[OpenApiExample("Refresh request", value={"refresh_token": "eyJ..."}, request_only=True)],
+)
 class MasterRefreshView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
@@ -74,7 +128,18 @@ class MasterLanguageView(generics.GenericAPIView):
         return success_response({"language": request.user.language})
 
 
-@extend_schema(tags=["Client Auth"])
+@extend_schema(
+    tags=["Client Auth"],
+    summary="Clientga OTP yuborish",
+    description=(
+        "Telefon raqamga OTP yuboradi. OTP TTL 120 sekund. Bitta telefon uchun qayta so'rov cooldown 3 daqiqa. "
+        "5 marta noto'g'ri kod kiritilsa 15 daqiqa block bo'ladi."
+    ),
+    examples=[
+        OpenApiExample("Send OTP request", value={"phone": "+998901234567"}, request_only=True),
+        OpenApiExample("Send OTP success", value={"success": True, "message": "OK", "data": {"phone": "+998901234567", "expires_in": 120}}, response_only=True),
+    ],
+)
 class SendOTPView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
@@ -86,7 +151,32 @@ class SendOTPView(generics.GenericAPIView):
         return success_response(serializer.save())
 
 
-@extend_schema(tags=["Client Auth"])
+@extend_schema(
+    tags=["Client Auth"],
+    summary="OTP tasdiqlash va client token olish",
+    description=(
+        "OTP to'g'ri bo'lsa client uchun `access_token`, `refresh_token`, `is_new` va `client` ma'lumotlari qaytadi. "
+        "`is_new=true` bo'lsa `PATCH /client/auth/register/` orqali profilni to'ldiring."
+    ),
+    examples=[
+        OpenApiExample("Verify OTP request", value={"phone": "+998901234567", "otp_code": "123456"}, request_only=True),
+        OpenApiExample(
+            "Verify OTP success",
+            value={
+                "success": True,
+                "message": "OK",
+                "data": {
+                    "access_token": "eyJ...",
+                    "refresh_token": "eyJ...",
+                    "expires_in": 259200,
+                    "is_new": True,
+                    "client": {"id": "uuid", "phone": "+998901234567", "first_name": "", "last_name": ""},
+                },
+            },
+            response_only=True,
+        ),
+    ],
+)
 class VerifyOTPView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
@@ -98,7 +188,18 @@ class VerifyOTPView(generics.GenericAPIView):
         return success_response(serializer.save())
 
 
-@extend_schema(tags=["Client Auth"])
+@extend_schema(
+    tags=["Client Auth"],
+    summary="Client profilini birinchi marta to'ldirish",
+    description="OTP login bo'lgandan keyin `is_new=true` bo'lsa ishlatiladi. Authorization: client access token kerak.",
+    examples=[
+        OpenApiExample(
+            "Client register request",
+            value={"first_name": "Aziz", "last_name": "Karimov", "language": "uz"},
+            request_only=True,
+        )
+    ],
+)
 class ClientRegisterView(EnvelopeMixin, generics.UpdateAPIView):
     permission_classes = [IsClient]
     serializer_class = ClientRegisterSerializer
@@ -132,7 +233,27 @@ class DeleteAccountView(generics.GenericAPIView):
         return success_response(message="Delete request accepted")
 
 
-@extend_schema(tags=["Client Profile"])
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Profile"],
+        summary="Client profile screen ma'lumotlari",
+        description=(
+            "Profile page yuqori card va sozlamalar uchun ishlatiladi. `current_tariff` ID emas, tarif nomi "
+            "sifatida qaytadi. `addresses_count` Profile sahifadagi `Manzillar 3` count uchun."
+        ),
+        examples=[OpenApiExample("Client profile response", value=CLIENT_PROFILE_RESPONSE_EXAMPLE, response_only=True)],
+    ),
+    put=extend_schema(
+        tags=["Client Profile"],
+        summary="Client profilini to'liq yangilash",
+        description="Ism, familiya, avatar va language fieldlarini yangilash uchun.",
+    ),
+    patch=extend_schema(
+        tags=["Client Profile"],
+        summary="Client profilini qisman yangilash",
+        description="Profile edit oynasi uchun. Masalan: `first_name`, `last_name`, `language`, `avatar`.",
+    ),
+)
 class ClientProfileView(EnvelopeMixin, generics.RetrieveUpdateAPIView):
     permission_classes = [IsClient]
     serializer_class = ClientSerializer
@@ -164,7 +285,18 @@ class MasterSettingsView(generics.GenericAPIView):
         return success_response(MasterProfileSerializer(request.user).data)
 
 
-@extend_schema(tags=["Client Profile"])
+@extend_schema(
+    tags=["Client Profile"],
+    summary="Notification/push sozlamalarini o'zgartirish",
+    description="Profile page'dagi `Bildirishnomalar` toggle uchun. `notifications_enabled` va `push_enabled` qabul qiladi.",
+    examples=[
+        OpenApiExample(
+            "Notification settings request",
+            value={"notifications_enabled": True, "push_enabled": True},
+            request_only=True,
+        )
+    ],
+)
 class ClientNotificationSettingsView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = ClientSerializer

@@ -38,13 +38,29 @@ class ClientDevice(TimeStampedUUIDModel):
 
 class Tariff(TimeStampedUUIDModel):
     name = models.CharField(max_length=120)
-    description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=12, decimal_places=2)
     duration_days = models.PositiveIntegerField(default=30)
+    is_popular = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("sort_order", "price", "name")
 
     def __str__(self):
         return self.name
+
+
+class TariffFeature(models.Model):
+    tariff = models.ForeignKey(Tariff, on_delete=models.CASCADE, related_name="features")
+    title = models.CharField(max_length=255)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("sort_order", "id")
+
+    def __str__(self):
+        return self.title
 
 
 class MasterCertificate(TimeStampedUUIDModel):

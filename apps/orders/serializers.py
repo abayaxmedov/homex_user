@@ -34,8 +34,8 @@ class OrderSerializer(serializers.ModelSerializer):
     tracking = OrderTrackingSerializer(read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     payment_type_label = serializers.CharField(source="get_payment_type_display", read_only=True)
-    can_cancel = serializers.SerializerMethodField()
-    can_rate = serializers.SerializerMethodField()
+    can_cancel = serializers.SerializerMethodField(help_text="Frontend cancel button ko'rsatishi mumkinmi.")
+    can_rate = serializers.SerializerMethodField(help_text="Frontend rating modal/button ko'rsatishi mumkinmi.")
 
     class Meta:
         model = Order
@@ -80,6 +80,14 @@ class OrderSerializer(serializers.ModelSerializer):
             "total_amount",
             "created_at",
         )
+        extra_kwargs = {
+            "status": {
+                "help_text": "`new`, `accepted`, `in_progress`, `completed`, `cancelled`, `rejected`."
+            },
+            "payment_type": {"help_text": "`cash`, `online`, `card`, `plastic`."},
+            "bonus_used": {"help_text": "Client ishlatgan bonus summa. Totaldan ayriladi."},
+            "total_amount": {"help_text": "service_fee + inventory_total - bonus_used."},
+        }
 
     @extend_schema_field(serializers.BooleanField)
     def get_can_cancel(self, obj):
@@ -172,8 +180,17 @@ class ReviewSerializer(serializers.ModelSerializer):
 
 
 class PaymentStartSerializer(serializers.Serializer):
-    payment_method = serializers.ChoiceField(choices=(("card", "Karta"), ("online", "Online"), ("plastic", "Plastik")))
-    bonus_used = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0)
+    payment_method = serializers.ChoiceField(
+        choices=(("card", "Karta"), ("online", "Online"), ("plastic", "Plastik")),
+        help_text="Payment start method: `card`, `online`, `plastic`.",
+    )
+    bonus_used = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        default=0,
+        help_text="Client ishlatmoqchi bo'lgan bonus summa.",
+    )
     receipt = serializers.FileField(required=False)
 
     def create(self, validated_data):

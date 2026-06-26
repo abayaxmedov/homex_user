@@ -7,7 +7,7 @@ from apps.profiles.models import (
     MasterCertificate,
     MasterDocument,
     PrivacyPolicy,
-    Tariff,
+    Tariff, TariffFeature,
 )
 from apps.services.serializers import ServiceCategorySerializer
 
@@ -68,11 +68,21 @@ class ClientDeviceSerializer(serializers.ModelSerializer):
             "total_amount": order.total_amount,
         }
 
+class TariffFeatureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TariffFeature
+        fields = [
+            "id",
+            "title",
+            "sort_order",
+        ]
 
 class TariffSerializer(serializers.ModelSerializer):
+    features = TariffFeatureSerializer(many=True, read_only=True)
+
     class Meta:
         model = Tariff
-        fields = ("id", "name", "description", "price", "duration_days", "is_active")
+        fields = ("id", "name", "price", "duration_days", "is_active", "is_popular", "features")
 
 
 class MasterCertificateSerializer(serializers.ModelSerializer):

@@ -1,16 +1,18 @@
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics
+from rest_framework.permissions import AllowAny
 
 from apps.accounts.permissions import IsClient
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
-from apps.market.models import MarketFavorite, MarketOrder, MarketProduct
-from apps.market.serializers import MarketFavoriteSerializer, MarketOrderSerializer, MarketProductSerializer
+from apps.market.models import MarketFavorite, MarketOrder, MarketProduct, MarketCategory
+from apps.market.serializers import MarketFavoriteSerializer, MarketOrderSerializer, MarketProductSerializer, \
+    MarketCategoryListSerializer
 
 
 @extend_schema_view(get=extend_schema(tags=["Client Market"]))
 class MarketProductListView(EnvelopeMixin, generics.ListAPIView):
-    permission_classes = [IsClient]
+    permission_classes = [AllowAny]
     serializer_class = MarketProductSerializer
 
     def get_queryset(self):
@@ -92,3 +94,11 @@ class ClientListingCreateView(EnvelopeMixin, generics.CreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(seller=self.request.user, is_active=True, is_moderated=False)
+
+class MarketCategoryListView(EnvelopeMixin, generics.ListAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = MarketCategoryListSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return MarketCategory.objects.order_by("name")

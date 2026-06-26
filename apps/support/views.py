@@ -26,11 +26,33 @@ class BaseSupportListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
         broadcast_support_message(message)
 
 
-@extend_schema_view(get=extend_schema(tags=["Master Support"]), post=extend_schema(tags=["Master Support"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Master Support"],
+        summary="Master support messages",
+        description="Support chat initial list. Realtime message uchun `/ws/master/support/` kanalidan foydalaning.",
+    ),
+    post=extend_schema(
+        tags=["Master Support"],
+        summary="Master support message yuborish",
+        description="REST orqali support message yaratadi va WebSocket kanaliga realtime event yuboradi.",
+    ),
+)
 class MasterSupportListCreateView(BaseSupportListCreateView):
     permission_classes = [IsMaster]
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Support"]), post=extend_schema(tags=["Client Support"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Support"],
+        summary="Client support messages",
+        description="Support chat initial list. Realtime message uchun `/ws/client/support/` kanalidan foydalaning.",
+    ),
+    post=extend_schema(
+        tags=["Client Support"],
+        summary="Client support message yuborish",
+        description="REST orqali support message yaratadi va WebSocket kanaliga realtime event yuboradi.",
+    ),
+)
 class ClientSupportListCreateView(BaseSupportListCreateView):
     permission_classes = [IsClient]

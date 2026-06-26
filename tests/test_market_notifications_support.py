@@ -51,6 +51,17 @@ def test_market_product_order_favorite_and_listing(client_api, client_user):
     assert MarketProduct.objects.get(name="Ishlatilgan ventil").is_moderated is False
 
 
+def test_market_categories_are_listed(client_api):
+    MarketCategory.objects.create(name="Quvurlar", slug="quvurlar")
+    MarketCategory.objects.create(name="Asboblar", slug="asboblar")
+
+    response = client_api.get(reverse("client-market-categories"))
+
+    assert response.status_code == 200
+    assert response.data["success"] is True
+    assert [category["slug"] for category in response.data["data"]] == ["asboblar", "quvurlar"]
+
+
 def test_notifications_can_be_read_by_role(client_api, master_api, client_user, master):
     client_notification = Notification.objects.create(
         role="client",

@@ -1,8 +1,9 @@
 from datetime import timedelta
 
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiExample, extend_schema, extend_schema_view
 from rest_framework import generics
+from rest_framework.permissions import AllowAny
 
 from apps.accounts.permissions import IsClient, IsMaster
 from apps.accounts.serializers import ClientSerializer
@@ -20,7 +21,31 @@ from apps.profiles.serializers import (
 )
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Addresses"]), post=extend_schema(tags=["Client Addresses"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Addresses"],
+        summary="Client manzillari",
+        description="Profile page `Manzillar` bo'limi uchun ro'yxat. Count `GET /client/profile/` ichida `addresses_count` bo'lib qaytadi.",
+    ),
+    post=extend_schema(
+        tags=["Client Addresses"],
+        summary="Yangi manzil qo'shish",
+        description="Client yangi manzil qo'shadi. `is_default=true` yuborilsa oldingi default manzillar false qilinadi.",
+        examples=[
+            OpenApiExample(
+                "Address create request",
+                value={
+                    "label": "Uy",
+                    "address_text": "Chilonzor, Tashkent",
+                    "lat": "41.30000000",
+                    "lng": "69.25000000",
+                    "is_default": True,
+                },
+                request_only=True,
+            )
+        ],
+    ),
+)
 class ClientAddressListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     permission_classes = [IsClient]
     serializer_class = ClientAddressSerializer
@@ -94,7 +119,13 @@ class ClientDeviceOrderView(generics.GenericAPIView):
         return success_response({"device_id": device.id, "message": "Use /client/orders/ to create an order"})
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Tariffs"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Tariffs"],
+        summary="Tariflar ro'yxati",
+        description="Profile page `Tariflar` bo'limi uchun active tariflar. Client profile response `current_tariff` ID emas, nom qaytaradi.",
+    )
+)
 class TariffListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [IsClient]
     serializer_class = TariffSerializer
@@ -104,7 +135,12 @@ class TariffListView(EnvelopeMixin, generics.ListAPIView):
         return Tariff.objects.filter(is_active=True)
 
 
-@extend_schema(tags=["Client Tariffs"])
+@extend_schema(
+    tags=["Client Tariffs"],
+    summary="Tarifga ulanish",
+    description="Client tanlangan tarifga ulanadi. Response ichida tarif detail va yangilangan client profile qaytadi.",
+    examples=[OpenApiExample("Subscribe request", value={"tariff_id": "tariff_uuid"}, request_only=True)],
+)
 class TariffSubscribeView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = TariffSerializer

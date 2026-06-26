@@ -51,21 +51,41 @@ class NotificationReadAllView(generics.GenericAPIView):
         return success_response(message="All notifications marked as read")
 
 
-MasterNotificationListView = extend_schema_view(get=extend_schema(tags=["Master Notifications"]))(
+MasterNotificationListView = extend_schema_view(
+    get=extend_schema(
+        tags=["Master Notifications"],
+        summary="Master notifications list",
+        description="Initial notification list uchun REST endpoint. Realtime update uchun `/ws/master/notifications/` kanaliga ulaning.",
+    )
+)(
     type("MasterNotificationListView", (NotificationListView,), {"permission_classes": [IsMaster]})
 )
-MasterNotificationReadView = extend_schema_view(patch=extend_schema(tags=["Master Notifications"]))(
+MasterNotificationReadView = extend_schema_view(
+    patch=extend_schema(tags=["Master Notifications"], summary="Master notification read", description="Bitta notificationni read qiladi va realtime read event yuboradi.")
+)(
     type("MasterNotificationReadView", (NotificationReadView,), {"permission_classes": [IsMaster]})
 )
-MasterNotificationReadAllView = extend_schema_view(patch=extend_schema(tags=["Master Notifications"]))(
+MasterNotificationReadAllView = extend_schema_view(
+    patch=extend_schema(tags=["Master Notifications"], summary="Master notifications read all", description="Master notificationlarini hammasini read qiladi.")
+)(
     type("MasterNotificationReadAllView", (NotificationReadAllView,), {"permission_classes": [IsMaster]})
 )
-ClientNotificationListView = extend_schema_view(get=extend_schema(tags=["Client Notifications"]))(
+ClientNotificationListView = extend_schema_view(
+    get=extend_schema(
+        tags=["Client Notifications"],
+        summary="Client notifications list",
+        description="Initial notification list uchun REST endpoint. Realtime update uchun `/ws/client/notifications/` kanaliga ulaning.",
+    )
+)(
     type("ClientNotificationListView", (NotificationListView,), {"permission_classes": [IsClient]})
 )
-ClientNotificationReadView = extend_schema_view(patch=extend_schema(tags=["Client Notifications"]))(
+ClientNotificationReadView = extend_schema_view(
+    patch=extend_schema(tags=["Client Notifications"], summary="Client notification read", description="Bitta notificationni read qiladi va realtime read event yuboradi.")
+)(
     type("ClientNotificationReadView", (NotificationReadView,), {"permission_classes": [IsClient]})
 )
-ClientNotificationReadAllView = extend_schema_view(patch=extend_schema(tags=["Client Notifications"]))(
+ClientNotificationReadAllView = extend_schema_view(
+    patch=extend_schema(tags=["Client Notifications"], summary="Client notifications read all", description="Client notificationlarini hammasini read qiladi.")
+)(
     type("ClientNotificationReadAllView", (NotificationReadAllView,), {"permission_classes": [IsClient]})
 )
