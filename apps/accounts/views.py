@@ -228,8 +228,7 @@ class DeleteAccountView(generics.GenericAPIView):
     serializer_class = LogoutSerializer
 
     def delete(self, request):
-        request.user.is_active = False
-        request.user.save(update_fields=["is_active"])
+        request.user.delete()
         return success_response(message="Delete request accepted")
 
 
