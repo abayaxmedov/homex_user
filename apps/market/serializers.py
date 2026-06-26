@@ -46,6 +46,10 @@ class MarketProductSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = ("id", "seller", "rating", "is_active", "is_moderated", "created_at")
+        extra_kwargs = {
+            "condition": {"help_text": "`new` - yangi mahsulot, `used` - ishlatilgan mahsulot."},
+            "is_moderated": {"help_text": "Admin/moderation tasdiqlaganmi. Client listing create qilinganda false bo'ladi."},
+        }
 
     @extend_schema_field(serializers.BooleanField)
     def get_is_favorite(self, obj):
@@ -82,6 +86,10 @@ class MarketOrderSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = ("id", "total_amount", "status", "created_at")
+        extra_kwargs = {
+            "status": {"help_text": "`pending`, `confirmed`, `delivered`, `cancelled`."},
+            "total_amount": {"help_text": "product.price * quantity."},
+        }
 
 
 class MarketFavoriteSerializer(serializers.ModelSerializer):
@@ -91,3 +99,8 @@ class MarketFavoriteSerializer(serializers.ModelSerializer):
         model = MarketFavorite
         fields = ("id", "product", "product_detail", "created_at")
         read_only_fields = ("id", "created_at")
+
+class MarketCategoryListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MarketCategory
+        fields = ("id", "name", "slug")

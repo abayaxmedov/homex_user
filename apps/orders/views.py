@@ -4,7 +4,8 @@ from django.conf import settings
 from django.db.models import Avg, F, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics
 
 from apps.accounts.models import Master
@@ -31,6 +32,43 @@ from apps.services.models import ServiceCategory
 from apps.services.serializers import ServiceCategorySerializer
 from apps.wallet.models import MasterWallet
 from apps.warehouse.models import MasterInventory
+
+
+ORDER_STATUS_TEXT = (
+    "`new` - yangi; `accepted` - master qabul qilgan; `in_progress` - jarayonda; "
+    "`completed` - bajarilgan; `cancelled` - client bekor qilgan; `rejected` - master rad qilgan."
+)
+
+ORDER_CREATE_EXAMPLE = {
+    "service": "service_uuid",
+    "address": "address_uuid",
+    "address_text": "Chilonzor, Tashkent",
+    "lat": "41.30000000",
+    "lng": "69.25000000",
+    "scheduled_date": "2026-06-25",
+    "scheduled_time": "10:00:00",
+    "payment_type": "cash",
+    "note": "Konditsioner ishlamayapti",
+}
+
+TRACKING_RESPONSE_EXAMPLE = {
+    "success": True,
+    "message": "OK",
+    "data": {
+        "order_id": "order_uuid",
+        "status": "accepted",
+        "order_location": {"lat": "41.30000000", "lng": "69.25000000", "address": "Chilonzor, Tashkent"},
+        "master": {"id": "master_uuid", "full_name": "Ali Usta", "rating": "4.90"},
+        "master_location": {"lat": "41.30100000", "lng": "69.25100000", "last_location_at": "2026-06-25T10:00:00+05:00"},
+        "distance_km": 1.2,
+        "eta_minutes": 3,
+        "websocket": {
+            "client_track": "/ws/client/track/order_uuid/",
+            "master_tracking": "/ws/master/tracking/",
+            "auth_header": "Authorization: Bearer {access_token}",
+        },
+    },
+}
 
 
 def tracking_payload(order):
@@ -112,7 +150,33 @@ class MasterHomeStatsView(generics.GenericAPIView):
         return success_response(data)
 
 
-@extend_schema_view(get=extend_schema(tags=["Master Orders"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Master Orders"],
+        summary="Master order list",
+        description=(
+            "Master uchun orderlar ro'yxati. `tab=yangi` yangi/unassigned orderlarni, `tab=joriy` qabul qilingan "
+            "yoki jarayondagi orderlarni, `tab=completed` bajarilgan orderlarni qaytaradi. "
+            f"Order statuslari: {ORDER_STATUS_TEXT}"
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="tab",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Qiymatlar: `yangi`, `new`, `available`, `joriy`, `in_process`, `completed`, `bajarilgan`.",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="date",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description="Orderlarni scheduled_date bo'yicha filter qiladi. Format: `YYYY-MM-DD`.",
+                required=False,
+            ),
+        ],
+    )
+)
 class MasterOrderListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [IsMaster]
     serializer_class = OrderSerializer
@@ -189,7 +253,26 @@ class MasterOrderRejectView(generics.GenericAPIView):
         return success_response(OrderSerializer(order).data)
 
 
-@extend_schema(tags=["Master Orders"])
+@extend_schema(
+    tags=["Master Orders"],
+    summary="Orderni yakunlash",
+    description=(
+        "Master bajarilgan orderni yakunlaydi. Multipart request ishlatiladi: `completion_photo` optional. "
+        "`used_items` inventory ishlatilgan bo'lsa JSON string/list sifatida yuboriladi. Yakunlanganda order total, "
+        "wallet transaction va client notification yangilanadi."
+    ),
+    examples=[
+        OpenApiExample(
+            "Complete order multipart fields",
+            value={
+                "service_fee": "285000.00",
+                "payment_type": "cash",
+                "used_items": [{"inventory_id": "inventory_uuid", "quantity": "1", "unit_price": "50000.00"}],
+            },
+            request_only=True,
+        )
+    ],
+)
 class MasterOrderCompleteView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = OrderCompleteSerializer
@@ -230,7 +313,27 @@ class MasterOrderTrackView(generics.GenericAPIView):
         return success_response(tracking_payload(order))
 
 
-@extend_schema(tags=["Master Tracking"])
+@extend_schema(
+    tags=["Master Tracking"],
+    summary="Master location REST fallback",
+    description=(
+        "Master xaritada location yuboradi. Agar `order_id` berilsa, order tracking snapshot yangilanadi va "
+        "client tracking WebSocket kanaliga event broadcast qilinadi. WebSocket token headerda yuboriladi."
+    ),
+    examples=[
+        OpenApiExample(
+            "Location update request",
+            value={
+                "lat": "41.30100000",
+                "lng": "69.25100000",
+                "is_online": True,
+                "is_available": True,
+                "order_id": "order_uuid",
+            },
+            request_only=True,
+        )
+    ],
+)
 class MasterLocationUpdateView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = MasterLocationSerializer
@@ -364,7 +467,19 @@ class ClientRecentOrdersView(EnvelopeMixin, generics.ListAPIView):
         return Order.objects.filter(client=self.request.user).order_by("-created_at")[:5]
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Masters"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Masters"],
+        summary="Yaqin masterlar",
+        description="Client map/home uchun yaqin online va available masterlarni qaytaradi. Distance va ETA hisoblanadi.",
+        parameters=[
+            OpenApiParameter("lat", OpenApiTypes.DECIMAL, OpenApiParameter.QUERY, description="Client latitude.", required=False),
+            OpenApiParameter("lng", OpenApiTypes.DECIMAL, OpenApiParameter.QUERY, description="Client longitude.", required=False),
+            OpenApiParameter("radius_km", OpenApiTypes.FLOAT, OpenApiParameter.QUERY, description="Qidiruv radiusi km. Default: 50.", required=False),
+            OpenApiParameter("specialization", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Master specialization bo'yicha search.", required=False),
+        ],
+    )
+)
 class NearbyMasterListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [IsClient]
     serializer_class = NearbyMasterSerializer
@@ -394,7 +509,31 @@ class NearbyMasterListView(EnvelopeMixin, generics.ListAPIView):
         return sorted(masters, key=lambda item: item.distance_km)
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Orders"]), post=extend_schema(tags=["Client Orders"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Orders"],
+        summary="Client order list",
+        description=f"Client buyurtmalari. `status` query bilan filter qilish mumkin. Order statuslari: {ORDER_STATUS_TEXT}",
+        parameters=[
+            OpenApiParameter(
+                "status",
+                OpenApiTypes.STR,
+                OpenApiParameter.QUERY,
+                description="Qiymatlar: `new`, `accepted`, `in_progress`, `completed`, `cancelled`, `rejected`.",
+                required=False,
+            )
+        ],
+    ),
+    post=extend_schema(
+        tags=["Client Orders"],
+        summary="Yangi order yaratish",
+        description=(
+            "Client service, manzil, vaqt va payment type bilan yangi buyurtma yaratadi. Yaratilgandan keyin online/available "
+            "masterlarga notification boradi. `payment_type`: `cash`, `online`, `card`, `plastic`."
+        ),
+        examples=[OpenApiExample("Create order request", value=ORDER_CREATE_EXAMPLE, request_only=True)],
+    ),
+)
 class ClientOrderListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     permission_classes = [IsClient]
     serializer_class = OrderSerializer
@@ -453,7 +592,15 @@ class ClientOrderCancelView(generics.GenericAPIView):
         return success_response(OrderSerializer(order).data)
 
 
-@extend_schema(tags=["Client Orders"])
+@extend_schema(
+    tags=["Client Orders"],
+    summary="Client tracking snapshot",
+    description=(
+        "Client order tracking screen ochilganda avval shu REST endpointdan snapshot olinadi. Keyin response ichidagi "
+        "`websocket.client_track` kanaliga ulaniladi. WebSocket auth header: `Authorization: Bearer <access_token>`."
+    ),
+    examples=[OpenApiExample("Tracking snapshot response", value=TRACKING_RESPONSE_EXAMPLE, response_only=True)],
+)
 class ClientOrderTrackView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = OrderSerializer

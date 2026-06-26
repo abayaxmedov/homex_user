@@ -46,8 +46,8 @@ class MasterSummarySerializer(serializers.ModelSerializer):
 
 
 class ClientSerializer(serializers.ModelSerializer):
-    current_tariff = serializers.SerializerMethodField()
-    addresses_count = serializers.SerializerMethodField()
+    current_tariff = serializers.SerializerMethodField(help_text="Client ulangan tarif nomi. ID emas, masalan: Premium.")
+    addresses_count = serializers.SerializerMethodField(help_text="Clientga tegishli manzillar soni. Profile page count uchun.")
 
     class Meta:
         model = Client

@@ -10,4 +10,5 @@ urlpatterns = [
     path("favorites/", views.MarketFavoriteListView.as_view(), name="client-market-favorites"),
     path("favorites/toggle/", views.MarketFavoriteToggleView.as_view(), name="client-market-favorite-toggle"),
     path("listings/", views.ClientListingCreateView.as_view(), name="client-market-listing-create"),
+    path("categories/", views.MarketCategoryListView.as_view(), name="client-market-categories")
 ]

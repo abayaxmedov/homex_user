@@ -1,15 +1,15 @@
 from django.contrib import admin
 
+from apps.common.admin_mixins import HomeXModelAdmin, HomeXTabularInline
 from apps.orders.models import Order, OrderInventoryUsage, OrderTracking, Review, ReviewPhoto
 
 
-class OrderInventoryUsageInline(admin.TabularInline):
+class OrderInventoryUsageInline(HomeXTabularInline):
     model = OrderInventoryUsage
-    extra = 0
 
 
 @admin.register(Order)
-class OrderAdmin(admin.ModelAdmin):
+class OrderAdmin(HomeXModelAdmin):
     list_display = ("id", "client", "master", "service", "status", "payment_type", "total_amount", "scheduled_date")
     search_fields = ("client__phone", "master__phone", "address_text", "note")
     list_filter = ("status", "payment_type", "scheduled_date")
@@ -17,23 +17,22 @@ class OrderAdmin(admin.ModelAdmin):
 
 
 @admin.register(OrderInventoryUsage)
-class OrderInventoryUsageAdmin(admin.ModelAdmin):
+class OrderInventoryUsageAdmin(HomeXModelAdmin):
     list_display = ("order", "inventory", "quantity", "unit_price", "total_price")
 
 
 @admin.register(OrderTracking)
-class OrderTrackingAdmin(admin.ModelAdmin):
+class OrderTrackingAdmin(HomeXModelAdmin):
     list_display = ("order", "master_lat", "master_lng", "distance_km", "eta_minutes", "updated_at")
     search_fields = ("order__client__phone", "order__master__phone", "order__address_text")
 
 
-class ReviewPhotoInline(admin.TabularInline):
+class ReviewPhotoInline(HomeXTabularInline):
     model = ReviewPhoto
-    extra = 0
 
 
 @admin.register(Review)
-class ReviewAdmin(admin.ModelAdmin):
+class ReviewAdmin(HomeXModelAdmin):
     list_display = ("order", "master", "client", "rating", "is_official", "created_at")
     search_fields = ("comment", "master__phone", "client__phone")
     list_filter = ("rating", "is_official")
@@ -41,5 +40,5 @@ class ReviewAdmin(admin.ModelAdmin):
 
 
 @admin.register(ReviewPhoto)
-class ReviewPhotoAdmin(admin.ModelAdmin):
+class ReviewPhotoAdmin(HomeXModelAdmin):
     list_display = ("review", "image")

@@ -6,4 +6,9 @@ class RoleJWTAuthenticationScheme(OpenApiAuthenticationExtension):
     name = "RoleJWTAuth"
 
     def get_security_definition(self, auto_schema):
-        return {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+        return {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Swagger Authorize oynasiga faqat access tokenni kiriting. REST header: Authorization: Bearer <access_token>.",
+        }

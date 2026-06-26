@@ -6,7 +6,7 @@ from apps.integrations.adapters import MapsClient, PaymentClient, PushClient, SM
 from apps.market.models import MarketCategory
 from apps.notifications.models import Notification
 from apps.orders.models import Order, Review
-from apps.profiles.models import ClientAddress, PrivacyPolicy, Tariff
+from apps.profiles.models import ClientAddress, PrivacyPolicy, Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory
 from apps.support.models import SupportMessage
 from apps.warehouse.models import WarehouseProduct
@@ -49,6 +49,7 @@ def test_core_models_are_registered_in_admin():
         MarketCategory,
         ClientAddress,
         Tariff,
+        TariffFeature,
         PrivacyPolicy,
         Notification,
         SupportMessage,

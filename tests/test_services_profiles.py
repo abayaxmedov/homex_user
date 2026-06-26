@@ -3,7 +3,15 @@ from datetime import date, time
 from django.urls import reverse
 
 from apps.orders.models import Order
-from apps.profiles.models import ClientAddress, ClientDevice, MasterCertificate, MasterDocument, PrivacyPolicy, Tariff
+from apps.profiles.models import (
+    ClientAddress,
+    ClientDevice,
+    MasterCertificate,
+    MasterDocument,
+    PrivacyPolicy,
+    Tariff,
+    TariffFeature,
+)
 
 
 def test_client_services_are_grouped_with_prices(client_api, service):
@@ -70,6 +78,18 @@ def test_tariff_subscription_updates_client(client_api, client_user):
     client_user.refresh_from_db()
     assert client_user.current_tariff == tariff
     assert client_user.tariff_expires_at is not None
+
+
+def test_tariff_list_returns_ordered_features(client_api):
+    tariff = Tariff.objects.create(name="Premium", price=50000, duration_days=30)
+    TariffFeature.objects.create(tariff=tariff, title="24/7 qo'llab-quvvatlash", sort_order=2)
+    TariffFeature.objects.create(tariff=tariff, title="15% chegirma", sort_order=1)
+
+    response = client_api.get(reverse("client-tariffs"))
+
+    assert response.status_code == 200
+    features = response.data["data"][0]["features"]
+    assert [feature["title"] for feature in features] == ["15% chegirma", "24/7 qo'llab-quvvatlash"]
 
 
 def test_client_profile_returns_tariff_name_and_address_count(client_api, client_user):
