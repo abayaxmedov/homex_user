@@ -3,6 +3,11 @@
 from django.db import migrations, models
 
 
+def clear_description(apps, schema_editor):
+    Tariff = apps.get_model('profiles', 'Tariff')
+    Tariff.objects.update(description='[]')
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,6 +15,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(clear_description, migrations.RunPython.noop),
         migrations.AlterField(
             model_name='tariff',
             name='description',
