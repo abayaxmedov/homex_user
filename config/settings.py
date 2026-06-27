@@ -114,7 +114,9 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer"
         if REDIS_URL == "locmem"
         else "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {} if REDIS_URL == "locmem" else {"hosts": [REDIS_URL]},
+        "CONFIG": {}
+        if REDIS_URL == "locmem"
+        else {"hosts": [{"address": REDIS_URL, "socket_timeout": None}]},
     }
 }
 
