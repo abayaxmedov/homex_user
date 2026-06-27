@@ -6,6 +6,7 @@ from apps.accounts.models import Master
 from apps.accounts.serializers import MasterSummarySerializer
 from apps.integrations.adapters import PaymentClient
 from apps.orders.models import Order, OrderInventoryUsage, OrderStatus, OrderTracking, PaymentType, Review, ReviewPhoto
+from apps.orders.tracking import ensure_tracking, tracking_state
 from apps.services.serializers import ServiceSerializer
 from apps.wallet.models import MasterWallet, WalletTransaction
 from apps.warehouse.models import MasterInventory
@@ -21,10 +22,50 @@ class OrderInventoryUsageSerializer(serializers.ModelSerializer):
 
 
 class OrderTrackingSerializer(serializers.ModelSerializer):
+    tracking_status = serializers.SerializerMethodField()
+    tracking_status_label = serializers.SerializerMethodField()
+    tracking_step = serializers.SerializerMethodField()
+    tracking_total_steps = serializers.SerializerMethodField()
+    tracking_steps = serializers.SerializerMethodField()
+
     class Meta:
         model = OrderTracking
-        fields = ("master_lat", "master_lng", "distance_km", "eta_minutes", "updated_at")
+        fields = (
+            "tracking_status",
+            "tracking_status_label",
+            "tracking_step",
+            "tracking_total_steps",
+            "tracking_steps",
+            "master_lat",
+            "master_lng",
+            "distance_km",
+            "eta_minutes",
+            "updated_at",
+        )
         read_only_fields = fields
+
+    def _state(self, obj):
+        return tracking_state(obj.order)
+
+    @extend_schema_field(serializers.CharField)
+    def get_tracking_status(self, obj):
+        return self._state(obj)["key"]
+
+    @extend_schema_field(serializers.CharField)
+    def get_tracking_status_label(self, obj):
+        return self._state(obj)["label"]
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_tracking_step(self, obj):
+        return self._state(obj)["step"]
+
+    @extend_schema_field(serializers.IntegerField)
+    def get_tracking_total_steps(self, obj):
+        return self._state(obj)["total_steps"]
+
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    def get_tracking_steps(self, obj):
+        return self._state(obj)["steps"]
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -33,6 +74,12 @@ class OrderSerializer(serializers.ModelSerializer):
     inventory_usages = OrderInventoryUsageSerializer(many=True, read_only=True)
     tracking = OrderTrackingSerializer(read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    tracking_status = serializers.SerializerMethodField()
+    tracking_status_label = serializers.SerializerMethodField()
+    tracking_step = serializers.SerializerMethodField()
+    tracking_total_steps = serializers.SerializerMethodField()
+    tracking_steps = serializers.SerializerMethodField()
+    master_phone_number = serializers.CharField(source="master.phone", read_only=True)
     payment_type_label = serializers.CharField(source="get_payment_type_display", read_only=True)
     can_cancel = serializers.SerializerMethodField(help_text="Frontend cancel button ko'rsatishi mumkinmi.")
     can_rate = serializers.SerializerMethodField(help_text="Frontend rating modal/button ko'rsatishi mumkinmi.")
@@ -55,8 +102,14 @@ class OrderSerializer(serializers.ModelSerializer):
             "note",
             "status",
             "status_label",
+            "tracking_status",
+            "tracking_status_label",
+            "tracking_step",
+            "tracking_total_steps",
+            "tracking_steps",
             "payment_type",
             "payment_type_label",
+            "master_phone_number",
             "service_fee",
             "inventory_total",
             "bonus_used",
@@ -97,12 +150,36 @@ class OrderSerializer(serializers.ModelSerializer):
     def get_can_rate(self, obj):
         return obj.status == OrderStatus.COMPLETED and not hasattr(obj, "review")
 
+    def _tracking_state(self, obj):
+        return tracking_state(obj)
+
+    @extend_schema_field(serializers.CharField)
+    def get_tracking_status(self, obj):
+        return self._tracking_state(obj)["key"]
+
+    @extend_schema_field(serializers.CharField)
+    def get_tracking_status_label(self, obj):
+        return self._tracking_state(obj)["label"]
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_tracking_step(self, obj):
+        return self._tracking_state(obj)["step"]
+
+    @extend_schema_field(serializers.IntegerField)
+    def get_tracking_total_steps(self, obj):
+        return self._tracking_state(obj)["total_steps"]
+
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    def get_tracking_steps(self, obj):
+        return self._tracking_state(obj)["steps"]
+
     def create(self, validated_data):
         service = validated_data["service"]
         validated_data["service_fee"] = service.base_price
         order = Order(**validated_data)
         order.recalculate_total()
         order.save()
+        ensure_tracking(order)
         return order
 
 

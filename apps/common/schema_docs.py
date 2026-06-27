@@ -72,10 +72,10 @@ Error response:
 
 | Status | UI label | Ma'nosi |
 |---|---|---|
-| `new` | Yangi | Client buyurtma yaratgan, hali masterga birikmagan yoki yangi holatda. |
-| `accepted` | Qabul qilingan | Master buyurtmani oldi. Tracking boshlanishi mumkin. |
-| `in_progress` | Jarayonda | Ish bajarilmoqda. |
-| `completed` | Bajarilgan | Master yakunladi, client rating berishi mumkin. |
+| `new` | Usta qidirilmoqda | Client buyurtma yaratgan, tracking ochilgan, hali master birikmagan. |
+| `accepted` | Usta yo'lda | Master buyurtmani oldi va location yuborishi mumkin. |
+| `in_progress` | Usta ishlamoqda | Master `/master/orders/{id}/start/` orqali ishni boshlagan. |
+| `completed` | Usta ishni tugatgan | Master yakunladi, client rating berishi mumkin. |
 | `cancelled` | Bekor qilingan | Client bekor qilgan. |
 | `rejected` | Rad etilgan | Master rad qilgan. |
 
@@ -113,6 +113,8 @@ Error response:
 | Master support chat | `/ws/master/support/` | master |
 | Master tracking send | `/ws/master/tracking/` | master |
 | Client order tracking | `/ws/client/track/{order_id}/` | client |
+
+Tracking snapshot va socket payloadlarida `tracking_status`, `tracking_status_label`, `tracking_step`, `tracking_total_steps`, `tracking_steps`, `master_contact.phone_number`, `master_location`, `distance_km`, `eta_minutes` keladi. Client bilan master orasida chat yo'q; client faqat master telefon raqamini oladi.
 
 Browser `new WebSocket()` custom `Authorization` header yubora olmaydi. Web frontend uchun gateway/proxy yoki header yubora oladigan WebSocket client strategiyasi kerak.
 """

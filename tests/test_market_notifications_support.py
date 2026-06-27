@@ -60,6 +60,46 @@ def test_market_categories_are_listed(client_api):
     assert response.status_code == 200
     assert response.data["success"] is True
     assert [category["slug"] for category in response.data["data"]] == ["asboblar", "quvurlar"]
+    assert response.data["data"][0]["products_count"] == 0
+
+
+def test_market_products_can_be_filtered_by_category_and_searched(client_api):
+    parts = MarketCategory.objects.create(name="Qismlar", slug="qismlar")
+    tools = MarketCategory.objects.create(name="Uskunalar", slug="uskunalar")
+    filter_product = MarketProduct.objects.create(
+        category=parts,
+        name="Filtr",
+        description="Suv filtri",
+        condition=MarketProduct.NEW,
+        price=25000,
+        quantity=3,
+    )
+    MarketProduct.objects.create(
+        category=tools,
+        name="Drel",
+        description="Elektr uskuna",
+        condition=MarketProduct.USED,
+        price=200000,
+        quantity=1,
+    )
+
+    by_slug = client_api.get(reverse("client-market-products"), {"category": "qismlar"})
+    by_id = client_api.get(reverse("client-market-products"), {"category": str(parts.id)})
+    search = client_api.get(reverse("client-market-product-search"), {"q": "filtr"})
+    empty = client_api.get(reverse("client-market-product-search"), {"q": "nasos"})
+    categories = client_api.get(reverse("client-market-categories"))
+
+    assert by_slug.status_code == 200
+    assert by_slug.data["count"] == 1
+    assert by_slug.data["results"][0]["id"] == str(filter_product.id)
+    assert by_id.data["count"] == 1
+    assert search.status_code == 200
+    assert search.data["count"] == 1
+    assert search.data["results"][0]["name"] == "Filtr"
+    assert empty.status_code == 200
+    assert empty.data["count"] == 0
+    counts = {category["slug"]: category["products_count"] for category in categories.data["data"]}
+    assert counts == {"qismlar": 1, "uskunalar": 1}
 
 
 def test_notifications_can_be_read_by_role(client_api, master_api, client_user, master):

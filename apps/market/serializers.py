@@ -101,6 +101,8 @@ class MarketFavoriteSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at")
 
 class MarketCategoryListSerializer(serializers.ModelSerializer):
+    products_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = MarketCategory
-        fields = ("id", "name", "slug")
+        fields = ("id", "name", "slug", "products_count")

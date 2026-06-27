@@ -4,6 +4,7 @@ from apps.market import views
 
 
 urlpatterns = [
+    path("products/search/", views.MarketProductSearchView.as_view(), name="client-market-product-search"),
     path("products/", views.MarketProductListView.as_view(), name="client-market-products"),
     path("products/<uuid:pk>/", views.MarketProductDetailView.as_view(), name="client-market-product-detail"),
     path("orders/", views.MarketOrderListCreateView.as_view(), name="client-market-orders"),
