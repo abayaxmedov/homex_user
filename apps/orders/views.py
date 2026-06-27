@@ -15,7 +15,7 @@ from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
-from apps.orders.models import Order, OrderStatus, OrderTracking, Review
+from apps.orders.models import HomeBanner, Order, OrderStatus, OrderTracking, Review
 from apps.orders.serializers import (
     MasterLocationSerializer,
     MapConfigSerializer,
@@ -76,7 +76,7 @@ TRACKING_RESPONSE_EXAMPLE = {
 }
 
 
-HOME_BANNERS = [
+DEFAULT_HOME_BANNERS = [
     {
         "id": "home-services-discount",
         "badge_text": "Bugun 25% chegirma",
@@ -89,6 +89,11 @@ HOME_BANNERS = [
         "is_active": True,
     }
 ]
+
+
+def get_home_banners(request):
+    banners = [banner.as_home_payload(request) for banner in HomeBanner.objects.filter(is_active=True)]
+    return banners or DEFAULT_HOME_BANNERS
 
 
 @extend_schema(tags=["Master Home"])
@@ -434,7 +439,7 @@ class ClientHomeView(generics.GenericAPIView):
                     {"key": "market", "label": "Market"},
                     {"key": "support", "label": "Qo'llab-quvvatlash"},
                 ],
-                "banners": [banner for banner in HOME_BANNERS if banner["is_active"]],
+                "banners": get_home_banners(request),
                 "websocket": {
                     "notifications": "/ws/client/notifications/",
                     "support": "/ws/client/support/",

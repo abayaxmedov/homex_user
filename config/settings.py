@@ -265,6 +265,11 @@ UNFOLD = {
                         "icon": "support_agent",
                         "link": reverse_lazy("admin:support_supportmessage_changelist"),
                     },
+                    {
+                        "title": "Home banners",
+                        "icon": "view_carousel",
+                        "link": reverse_lazy("admin:orders_homebanner_changelist"),
+                    },
                 ],
             },
             {

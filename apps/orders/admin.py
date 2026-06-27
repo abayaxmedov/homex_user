@@ -1,7 +1,30 @@
 from django.contrib import admin
 
 from apps.common.admin_mixins import HomeXModelAdmin, HomeXTabularInline
-from apps.orders.models import Order, OrderInventoryUsage, OrderTracking, Review, ReviewPhoto
+from apps.orders.models import HomeBanner, Order, OrderInventoryUsage, OrderTracking, Review, ReviewPhoto
+
+
+@admin.register(HomeBanner)
+class HomeBannerAdmin(HomeXModelAdmin):
+    list_display = ("title", "key", "cta_action", "sort_order", "is_active", "updated_at")
+    list_editable = ("sort_order", "is_active")
+    search_fields = ("title", "key", "badge_text", "cta_label", "cta_action")
+    list_filter = ("is_active", "target_type")
+    prepopulated_fields = {"key": ("title",)}
+    fields = (
+        "key",
+        "badge_text",
+        "title",
+        "discount_percent",
+        "cta_label",
+        "cta_action",
+        "target_type",
+        "target_value",
+        "banner_image",
+        "external_banner_url",
+        "sort_order",
+        "is_active",
+    )
 
 
 class OrderInventoryUsageInline(HomeXTabularInline):
