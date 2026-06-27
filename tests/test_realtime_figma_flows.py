@@ -37,11 +37,56 @@ def test_master_sees_and_accepts_unassigned_order(master_api, master, client_use
     order.refresh_from_db()
 
     assert list_response.status_code == 200
+    assert OrderTracking.objects.filter(order=order).exists()
     assert str(order.id) in {item["id"] for item in list_response.data["results"]}
     assert accept_response.status_code == 200
     assert order.master == master
     assert order.status == OrderStatus.ACCEPTED
     assert Notification.objects.filter(client=client_user, data__order_id=str(order.id)).exists()
+
+
+def test_client_order_create_opens_tracking_and_status_flow(client_api, master_api, master, client_user, service):
+    create_response = client_api.post(
+        reverse("client-orders"),
+        {
+            "service": str(service.id),
+            "address_text": "Chilonzor, Tashkent",
+            "lat": "41.30000000",
+            "lng": "69.25000000",
+            "scheduled_date": str(date.today()),
+            "scheduled_time": "10:00",
+            "payment_type": "cash",
+        },
+        format="json",
+    )
+    order = Order.objects.get(client=client_user)
+    search_track = client_api.get(reverse("client-order-track", args=[order.id]))
+    accept_response = master_api.post(reverse("master-order-accept", args=[order.id]))
+    accepted_track = client_api.get(reverse("client-order-track", args=[order.id]))
+    start_response = master_api.post(reverse("master-order-start", args=[order.id]))
+    working_track = client_api.get(reverse("client-order-track", args=[order.id]))
+    complete_response = master_api.post(
+        reverse("master-order-complete", args=[order.id]),
+        {"service_fee": "100000.00", "payment_type": "cash"},
+        format="json",
+    )
+    completed_track = client_api.get(reverse("client-order-track", args=[order.id]))
+
+    assert create_response.status_code == 201
+    assert OrderTracking.objects.filter(order=order).exists()
+    assert search_track.data["data"]["tracking_status"] == "searching_master"
+    assert search_track.data["data"]["tracking_status_label"] == "Usta qidirilmoqda"
+    assert accept_response.status_code == 200
+    assert accepted_track.data["data"]["tracking_status"] == "master_on_way"
+    assert accepted_track.data["data"]["tracking_status_label"] == "Usta yo'lda"
+    assert accepted_track.data["data"]["master_contact"]["phone_number"] == master.phone
+    assert "chat" not in accepted_track.data["data"]["websocket"]
+    assert start_response.status_code == 200
+    assert working_track.data["data"]["tracking_status"] == "master_working"
+    assert working_track.data["data"]["tracking_status_label"] == "Usta ishlamoqda"
+    assert complete_response.status_code == 200
+    assert completed_track.data["data"]["tracking_status"] == "master_finished"
+    assert completed_track.data["data"]["tracking_status_label"] == "Usta ishni tugatgan"
 
 
 def test_tracking_location_update_and_client_track_payload(master_api, client_api, master, client_user, service):
@@ -67,6 +112,8 @@ def test_tracking_location_update_and_client_track_payload(master_api, client_ap
     assert track_response.status_code == 200
     assert track_response.data["data"]["master_location"]["lat"] == tracking.master_lat
     assert track_response.data["data"]["distance_km"] is not None
+    assert track_response.data["data"]["tracking_status"] == "master_on_way"
+    assert track_response.data["data"]["master_contact"]["phone_number"] == master.phone
 
 
 def test_nearby_masters_return_distance_and_eta(client_api, master):
@@ -133,6 +180,11 @@ def test_client_home_and_map_config_are_frontend_ready(client_api):
     assert home_response.status_code == 200
     assert "websocket" in home_response.data["data"]
     assert "quick_actions" in home_response.data["data"]
+    assert home_response.data["data"]["banners"][0]["title"] == "Uy xizmatlariga maxsus chegirma"
+    assert home_response.data["data"]["banners"][0]["cta_action"] == "create_order"
+    assert "banner_url" in home_response.data["data"]["banners"][0]
+    assert "image_url" not in home_response.data["data"]["banners"][0]
+    assert "background" not in home_response.data["data"]["banners"][0]
     assert map_response.status_code == 200
     assert map_response.data["data"]["tracking_ws_template"] == "/ws/client/track/{order_id}/"
     assert map_response.data["data"]["auth_header"] == "Authorization: Bearer {access_token}"

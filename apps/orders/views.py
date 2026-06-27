@@ -1,5 +1,3 @@
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db.models import Avg, F, Q, Sum
 from django.shortcuts import get_object_or_404
@@ -7,6 +5,7 @@ from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics
+from rest_framework.exceptions import ValidationError
 
 from apps.accounts.models import Master
 from apps.accounts.permissions import IsClient, IsMaster
@@ -28,6 +27,7 @@ from apps.orders.serializers import (
     PaymentStartSerializer,
     ReviewSerializer,
 )
+from apps.orders.tracking import broadcast_tracking, ensure_tracking, tracking_payload
 from apps.services.models import ServiceCategory
 from apps.services.serializers import ServiceCategorySerializer
 from apps.wallet.models import MasterWallet
@@ -35,8 +35,8 @@ from apps.warehouse.models import MasterInventory
 
 
 ORDER_STATUS_TEXT = (
-    "`new` - yangi; `accepted` - master qabul qilgan; `in_progress` - jarayonda; "
-    "`completed` - bajarilgan; `cancelled` - client bekor qilgan; `rejected` - master rad qilgan."
+    "`new` - Usta qidirilmoqda; `accepted` - Usta yo'lda; `in_progress` - Usta ishlamoqda; "
+    "`completed` - Usta ishni tugatgan; `cancelled` - client bekor qilgan; `rejected` - master rad qilgan."
 )
 
 ORDER_CREATE_EXAMPLE = {
@@ -57,8 +57,13 @@ TRACKING_RESPONSE_EXAMPLE = {
     "data": {
         "order_id": "order_uuid",
         "status": "accepted",
+        "tracking_status": "master_on_way",
+        "tracking_status_label": "Usta yo'lda",
+        "tracking_step": 2,
+        "tracking_total_steps": 4,
         "order_location": {"lat": "41.30000000", "lng": "69.25000000", "address": "Chilonzor, Tashkent"},
         "master": {"id": "master_uuid", "full_name": "Ali Usta", "rating": "4.90"},
+        "master_contact": {"phone_number": "+998901112233"},
         "master_location": {"lat": "41.30100000", "lng": "69.25100000", "last_location_at": "2026-06-25T10:00:00+05:00"},
         "distance_km": 1.2,
         "eta_minutes": 3,
@@ -71,46 +76,19 @@ TRACKING_RESPONSE_EXAMPLE = {
 }
 
 
-def tracking_payload(order):
-    tracking = getattr(order, "tracking", None)
-    master = order.master
-    master_lat = getattr(tracking, "master_lat", None) or getattr(master, "lat", None)
-    master_lng = getattr(tracking, "master_lng", None) or getattr(master, "lng", None)
-    calculated_distance = getattr(tracking, "distance_km", None)
-    if calculated_distance is None and master_lat is not None and master_lng is not None:
-        calculated_distance = distance_km(master_lat, master_lng, order.lat, order.lng)
-    calculated_eta = getattr(tracking, "eta_minutes", None) or eta_minutes(calculated_distance)
-    return {
-        "order_id": order.id,
-        "status": order.status,
-        "order_location": {"lat": order.lat, "lng": order.lng, "address": order.address_text},
-        "master": MasterSummarySerializer(master).data if master else None,
-        "master_location": {
-            "lat": master_lat,
-            "lng": master_lng,
-            "last_location_at": getattr(master, "last_location_at", None),
-        },
-        "distance_km": calculated_distance,
-        "eta_minutes": calculated_eta,
-        "websocket": {
-            "client_track": f"/ws/client/track/{order.id}/",
-            "master_tracking": "/ws/master/tracking/",
-            "auth_header": "Authorization: Bearer {access_token}",
-        },
+HOME_BANNERS = [
+    {
+        "id": "home-services-discount",
+        "badge_text": "Bugun 25% chegirma",
+        "title": "Uy xizmatlariga maxsus chegirma",
+        "discount_percent": 25,
+        "cta_label": "Band qilish",
+        "cta_action": "create_order",
+        "target": {"type": "services", "value": None},
+        "banner_url": None,
+        "is_active": True,
     }
-
-
-def broadcast_tracking(order, payload):
-    channel_layer = get_channel_layer()
-    if not channel_layer:
-        return
-    try:
-        async_to_sync(channel_layer.group_send)(
-            f"order_tracking_{order.id}",
-            {"type": "location.update", "payload": payload},
-        )
-    except Exception:
-        return
+]
 
 
 @extend_schema(tags=["Master Home"])
@@ -221,6 +199,7 @@ class MasterOrderAcceptView(generics.GenericAPIView):
         order.master = request.user
         order.status = OrderStatus.ACCEPTED
         order.save(update_fields=["master", "status", "updated_at"])
+        ensure_tracking(order)
         create_notification(
             role="client",
             client=order.client,
@@ -228,6 +207,36 @@ class MasterOrderAcceptView(generics.GenericAPIView):
             body=f"{request.user.full_name} buyurtmangizni qabul qildi",
             data={"order_id": str(order.id), "status": order.status},
         )
+        broadcast_tracking(order, event_type="tracking.update")
+        return success_response(OrderSerializer(order).data)
+
+
+@extend_schema(
+    tags=["Master Orders"],
+    summary="Order ishini boshlash",
+    description="Master obyektga yetib borgach order statusini `in_progress` qiladi va client tracking socketiga yuboradi.",
+)
+class MasterOrderStartView(generics.GenericAPIView):
+    permission_classes = [IsMaster]
+    serializer_class = OrderSerializer
+
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, master=request.user)
+        if order.status == OrderStatus.IN_PROGRESS:
+            return success_response(OrderSerializer(order).data)
+        if order.status != OrderStatus.ACCEPTED:
+            raise ValidationError({"status": "Order faqat accepted holatidan in_progress holatiga o'tadi"})
+        order.status = OrderStatus.IN_PROGRESS
+        order.save(update_fields=["status", "updated_at"])
+        ensure_tracking(order)
+        create_notification(
+            role="client",
+            client=order.client,
+            title="Usta ishni boshladi",
+            body="Usta buyurtma bo'yicha ishni boshladi",
+            data={"order_id": str(order.id), "status": order.status},
+        )
+        broadcast_tracking(order, event_type="tracking.update")
         return success_response(OrderSerializer(order).data)
 
 
@@ -250,6 +259,7 @@ class MasterOrderRejectView(generics.GenericAPIView):
             body=order.rejected_reason,
             data={"order_id": str(order.id), "status": order.status},
         )
+        broadcast_tracking(order, event_type="tracking.update")
         return success_response(OrderSerializer(order).data)
 
 
@@ -290,6 +300,7 @@ class MasterOrderCompleteView(generics.GenericAPIView):
             body="Usta buyurtmani yakunladi",
             data={"order_id": str(order.id), "status": order.status, "total_amount": str(order.total_amount)},
         )
+        broadcast_tracking(order, event_type="tracking.update")
         return success_response(
             {
                 "order": OrderSerializer(order).data,
@@ -374,14 +385,8 @@ class MasterLocationUpdateView(generics.GenericAPIView):
             response["tracking"] = tracking_payload(order)
             broadcast_tracking(
                 order,
-                {
-                    "order_id": str(order.id),
-                    "lat": str(tracking.master_lat),
-                    "lng": str(tracking.master_lng),
-                    "distance_km": float(tracking.distance_km) if tracking.distance_km is not None else None,
-                    "eta_minutes": tracking.eta_minutes,
-                    "updated_at": tracking.updated_at.isoformat(),
-                },
+                tracking_payload(order),
+                event_type="master.location",
             )
         return success_response(response)
 
@@ -429,6 +434,7 @@ class ClientHomeView(generics.GenericAPIView):
                     {"key": "market", "label": "Market"},
                     {"key": "support", "label": "Qo'llab-quvvatlash"},
                 ],
+                "banners": [banner for banner in HOME_BANNERS if banner["is_active"]],
                 "websocket": {
                     "notifications": "/ws/client/notifications/",
                     "support": "/ws/client/support/",
@@ -547,6 +553,7 @@ class ClientOrderListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         order = serializer.save(client=self.request.user)
+        ensure_tracking(order)
         masters = Master.objects.filter(is_active=True, is_online=True, is_available=True)[:50]
         for master in masters:
             create_notification(
@@ -589,6 +596,7 @@ class ClientOrderCancelView(generics.GenericAPIView):
                 body=order.cancel_reason,
                 data={"order_id": str(order.id), "status": order.status},
             )
+        broadcast_tracking(order, event_type="tracking.update")
         return success_response(OrderSerializer(order).data)
 
 

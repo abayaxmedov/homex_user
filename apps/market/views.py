@@ -1,4 +1,8 @@
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from uuid import UUID
+
+from django.db.models import Count, Q
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
 
@@ -10,7 +14,34 @@ from apps.market.serializers import MarketFavoriteSerializer, MarketOrderSeriali
     MarketCategoryListSerializer
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Market"]))
+def is_uuid(value):
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Market"],
+        summary="Market product list/search",
+        description=(
+            "Market productlar ro'yxati. Category chip bosilganda `category` queryga category `id` yoki `slug` yuboriladi. "
+            "Search screen uchun `q` yoki `search` query ishlatiladi."
+        ),
+        parameters=[
+            OpenApiParameter("category", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Category id yoki slug."),
+            OpenApiParameter("category_id", OpenApiTypes.UUID, OpenApiParameter.QUERY, description="Category UUID."),
+            OpenApiParameter("category_slug", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Category slug."),
+            OpenApiParameter("q", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Product search query."),
+            OpenApiParameter("search", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Product search query alias."),
+            OpenApiParameter("condition", OpenApiTypes.STR, OpenApiParameter.QUERY, description="`new` yoki `used`."),
+            OpenApiParameter("min_price", OpenApiTypes.DECIMAL, OpenApiParameter.QUERY),
+            OpenApiParameter("max_price", OpenApiTypes.DECIMAL, OpenApiParameter.QUERY),
+        ],
+    )
+)
 class MarketProductListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [AllowAny]
     serializer_class = MarketProductSerializer
@@ -19,22 +50,38 @@ class MarketProductListView(EnvelopeMixin, generics.ListAPIView):
         queryset = MarketProduct.objects.filter(is_active=True, is_moderated=True).select_related(
             "category", "seller"
         ).prefetch_related("images")
-        category = self.request.query_params.get("category")
-        search = self.request.query_params.get("search")
+        category = (
+            self.request.query_params.get("category")
+            or self.request.query_params.get("category_id")
+            or self.request.query_params.get("category_slug")
+        )
+        search = self.request.query_params.get("q") or self.request.query_params.get("search")
         condition = self.request.query_params.get("condition")
         min_price = self.request.query_params.get("min_price")
         max_price = self.request.query_params.get("max_price")
-        if category:
-            queryset = queryset.filter(category_id=category)
+        if category and category not in {"all", "hammasi"}:
+            if is_uuid(category):
+                queryset = queryset.filter(category_id=category)
+            else:
+                queryset = queryset.filter(category__slug=category)
         if condition:
             queryset = queryset.filter(condition=condition)
         if search:
-            queryset = queryset.filter(name__icontains=search)
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(description__icontains=search)
+                | Q(category__name__icontains=search)
+                | Q(category__slug__icontains=search)
+            )
         if min_price:
             queryset = queryset.filter(price__gte=min_price)
         if max_price:
             queryset = queryset.filter(price__lte=max_price)
         return queryset
+
+
+class MarketProductSearchView(MarketProductListView):
+    pass
 
 
 @extend_schema_view(get=extend_schema(tags=["Client Market"]))
@@ -95,10 +142,13 @@ class ClientListingCreateView(EnvelopeMixin, generics.CreateAPIView):
     def perform_create(self, serializer):
         serializer.save(seller=self.request.user, is_active=True, is_moderated=False)
 
+@extend_schema_view(post=extend_schema(tags=["Client Market"]))
 class MarketCategoryListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [AllowAny]
     serializer_class = MarketCategoryListSerializer
     pagination_class = None
 
     def get_queryset(self):
-        return MarketCategory.objects.order_by("name")
+        return MarketCategory.objects.annotate(
+            products_count=Count("marketproduct", filter=Q(marketproduct__is_active=True, marketproduct__is_moderated=True))
+        ).order_by("name")
