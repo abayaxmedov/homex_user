@@ -9,7 +9,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.accounts.models import Client, FCMDevice, Language, Master, OTPRecord
+from apps.accounts.models import Client, FCMDevice, Language, Master, MasterApprovalStatus, OTPRecord
 from apps.accounts.tokens import issue_role_tokens
 from apps.integrations.adapters import SMSClient
 
@@ -99,6 +99,9 @@ class MasterProfileSerializer(serializers.ModelSerializer):
             "specialization",
             "avatar",
             "rating",
+            "approval_status",
+            "approved_at",
+            "rejected_reason",
             "is_online",
             "is_available",
             "lat",
@@ -108,7 +111,16 @@ class MasterProfileSerializer(serializers.ModelSerializer):
             "notifications_enabled",
             "push_enabled",
         )
-        read_only_fields = ("phone", "rating", "lat", "lng", "last_location_at")
+        read_only_fields = (
+            "phone",
+            "rating",
+            "approval_status",
+            "approved_at",
+            "rejected_reason",
+            "lat",
+            "lng",
+            "last_location_at",
+        )
 
 
 class MasterLoginSerializer(serializers.Serializer):
@@ -117,9 +129,17 @@ class MasterLoginSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         try:
-            master = Master.objects.get(phone=attrs["phone"], is_active=True)
+            master = Master.objects.get(phone=attrs["phone"])
         except Master.DoesNotExist as exc:
             raise serializers.ValidationError("Telefon yoki parol noto'g'ri") from exc
+        if master.approval_status == MasterApprovalStatus.PENDING:
+            raise serializers.ValidationError("Arizangiz admin tasdig'ini kutmoqda")
+        if master.approval_status == MasterApprovalStatus.REJECTED:
+            raise serializers.ValidationError(master.rejected_reason or "Arizangiz admin tomonidan rad etilgan")
+        if not master.is_active:
+            raise serializers.ValidationError("Master akkaunti faol emas")
+        if not master.password:
+            raise serializers.ValidationError("Admin hali login parol bermagan")
         if not master.check_password(attrs["password"]):
             raise serializers.ValidationError("Telefon yoki parol noto'g'ri")
         attrs["master"] = master
@@ -130,6 +150,50 @@ class MasterLoginSerializer(serializers.Serializer):
         tokens = issue_role_tokens(master, "master")
         tokens["master"] = MasterSummarySerializer(master).data
         return tokens
+
+
+class MasterRegisterSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Master
+        fields = ("id", "first_name", "last_name", "phone", "specialization", "approval_status", "created_at")
+        read_only_fields = ("id", "approval_status", "created_at")
+
+    def validate_phone(self, value):
+        existing = Master.objects.filter(phone=value).first()
+        if existing and existing.approval_status == MasterApprovalStatus.APPROVED:
+            raise serializers.ValidationError("Bu telefon raqam bilan master allaqachon mavjud")
+        return value
+
+    def create(self, validated_data):
+        master = Master.objects.filter(phone=validated_data["phone"]).first()
+        if master:
+            for field in ("first_name", "last_name", "specialization"):
+                setattr(master, field, validated_data.get(field, getattr(master, field)))
+            master.approval_status = MasterApprovalStatus.PENDING
+            master.is_active = False
+            master.password = ""
+            master.rejected_reason = ""
+            master.approved_at = None
+            master.save(
+                update_fields=[
+                    "first_name",
+                    "last_name",
+                    "specialization",
+                    "approval_status",
+                    "is_active",
+                    "password",
+                    "rejected_reason",
+                    "approved_at",
+                    "updated_at",
+                ]
+            )
+            return master
+        return Master.objects.create(
+            **validated_data,
+            password="",
+            is_active=False,
+            approval_status=MasterApprovalStatus.PENDING,
+        )
 
 
 class SendOTPSerializer(serializers.Serializer):
@@ -211,8 +275,11 @@ class RefreshSerializer(serializers.Serializer):
         model = Master if role == "master" else Client if role == "client" else None
         if not model or not subject_id:
             raise serializers.ValidationError("Refresh token role is invalid")
+        lookup = {"id": subject_id, "is_active": True}
+        if role == "master":
+            lookup["approval_status"] = MasterApprovalStatus.APPROVED
         try:
-            subject = model.objects.get(id=subject_id, is_active=True)
+            subject = model.objects.get(**lookup)
         except model.DoesNotExist as exc:
             raise serializers.ValidationError("Token user not found") from exc
         return issue_role_tokens(subject, role)

@@ -4,12 +4,13 @@ HomeX API frontend va mobile integratsiya uchun tuzilgan. Barcha endpointlar `/a
 ## Tez boshlash
 
 1. Client login: `POST /client/auth/send-otp/` -> `POST /client/auth/verify-otp/`.
-2. Master login: `POST /master/auth/login/`.
-3. Protected endpointlarda `Authorize` tugmasiga faqat access tokenni yozing. Swagger o'zi `Bearer` qo'shadi.
-4. REST requestlarda header: `Authorization: Bearer <access_token>`.
-5. Access token muddati: 3 kun. Refresh token muddati: 15 kun.
-6. Refresh endpointlar yangi `access_token` va yangi `refresh_token` qaytaradi.
-7. WebSocketlarda token URL query orqali yuborilmaydi. Faqat header: `Authorization: Bearer <access_token>`.
+2. Master birinchi marta ariza qoldiradi: `POST /master/auth/register/`.
+3. Admin master arizasini tasdiqlab password bergandan keyin master login qiladi: `POST /master/auth/login/`.
+4. Protected endpointlarda `Authorize` tugmasiga faqat access tokenni yozing. Swagger o'zi `Bearer` qo'shadi.
+5. REST requestlarda header: `Authorization: Bearer <access_token>`.
+6. Access token muddati: 3 kun. Refresh token muddati: 15 kun.
+7. Refresh endpointlar yangi `access_token` va yangi `refresh_token` qaytaradi.
+8. WebSocketlarda token URL query orqali yuborilmaydi. Faqat header: `Authorization: Bearer <access_token>`.
 
 ## Standart response formatlari
 
@@ -99,6 +100,16 @@ Error response:
 | `market_order.status` | `delivered` | Yetkazilgan |
 | `market_order.status` | `cancelled` | Bekor qilingan |
 
+## Master auth onboarding
+
+| Endpoint | Bo'lim | Ma'nosi |
+|---|---|---|
+| `POST /master/auth/register/` | Master Auth | Usta ism, familiya, telefon va ixtisoslik bilan ariza qoldiradi. Response `approval_status=pending`. |
+| `POST /master/auth/login/` | Master Auth | Faqat admin tasdiqlagan va password berilgan master login qiladi. |
+| `POST /master/auth/refresh/` | Master Auth | Approved/active master tokenlarini yangilaydi. |
+
+`approval_status` qiymatlari: `pending`, `approved`, `rejected`.
+
 ## Profile page uchun muhim fieldlar
 
 `GET /client/profile/` response’da `current_tariff` tarif nomi sifatida qaytadi, ID emas. `addresses_count` esa Profile sahifadagi "Manzillar 3" kabi count uchun ishlatiladi.
@@ -131,8 +142,8 @@ OPENAPI_TAGS = [
     {"name": "Client Push", "description": "Client FCM token register qilish."},
     {"name": "Client Notifications", "description": "Notification list, read, read-all. Realtime uchun `/ws/client/notifications/`."},
     {"name": "Client Support", "description": "Client support chat REST list/create. Realtime uchun `/ws/client/support/`."},
-    {"name": "Client Market", "description": "Market products, favorites, market orders, client listing create."},
-    {"name": "Master Auth", "description": "Master phone/password login, refresh/logout/me/language/delete account."},
+    {"name": "Client Market", "description": "Market products, categories, favorites, market orders, client listing create."},
+    {"name": "Master Auth", "description": "Master ariza qoldirish, admin tasdiqlagandan keyin phone/password login, refresh/logout/me/language/delete account."},
     {"name": "Master Home", "description": "Master dashboard stats, wallet summary, unread notifications, websocket hints."},
     {"name": "Master Orders", "description": "Master order list/detail, accept/reject/complete, tracking snapshot."},
     {"name": "Master Tracking", "description": "Master location REST fallback va WebSocket tracking ma'lumotlari."},

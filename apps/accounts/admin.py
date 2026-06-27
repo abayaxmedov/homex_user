@@ -1,6 +1,7 @@
 from django.contrib import admin
+from django.utils import timezone
 
-from apps.accounts.models import Client, FCMDevice, Master, OTPRecord
+from apps.accounts.models import Client, FCMDevice, Master, MasterApprovalStatus, OTPRecord
 from apps.common.admin_mixins import HomeXModelAdmin
 
 
@@ -17,6 +18,7 @@ class MasterAdmin(HomeXModelAdmin):
         "phone",
         "full_name",
         "specialization",
+        "approval_status",
         "rating",
         "is_online",
         "is_available",
@@ -24,7 +26,26 @@ class MasterAdmin(HomeXModelAdmin):
         "is_active",
     )
     search_fields = ("phone", "first_name", "last_name", "specialization")
-    list_filter = ("is_online", "is_available", "is_active", "language")
+    list_filter = ("approval_status", "is_online", "is_available", "is_active", "language")
+    readonly_fields = ("approved_at",)
+    actions = ("approve_masters", "reject_masters")
+
+    @admin.action(description="Tanlangan ustalarni tasdiqlash")
+    def approve_masters(self, request, queryset):
+        queryset.update(
+            approval_status=MasterApprovalStatus.APPROVED,
+            is_active=True,
+            rejected_reason="",
+            approved_at=timezone.now(),
+        )
+
+    @admin.action(description="Tanlangan ustalarni rad etish")
+    def reject_masters(self, request, queryset):
+        queryset.update(
+            approval_status=MasterApprovalStatus.REJECTED,
+            is_active=False,
+            approved_at=None,
+        )
 
 
 @admin.register(OTPRecord)

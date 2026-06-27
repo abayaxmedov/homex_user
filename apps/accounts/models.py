@@ -10,6 +10,12 @@ class Language(models.TextChoices):
     EN = "en", "English"
 
 
+class MasterApprovalStatus(models.TextChoices):
+    PENDING = "pending", "Tasdiq kutilmoqda"
+    APPROVED = "approved", "Tasdiqlangan"
+    REJECTED = "rejected", "Rad etilgan"
+
+
 class Client(TimeStampedUUIDModel):
     phone = models.CharField(max_length=20, unique=True)
     first_name = models.CharField(max_length=100, blank=True)
@@ -43,10 +49,17 @@ class Master(TimeStampedUUIDModel):
     phone = models.CharField(max_length=20, unique=True)
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100, blank=True)
-    password = models.CharField(max_length=128)
+    password = models.CharField(max_length=128, blank=True)
     specialization = models.CharField(max_length=120, blank=True)
     avatar = models.ImageField(upload_to="masters/avatars/", null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
+    approval_status = models.CharField(
+        max_length=20,
+        choices=MasterApprovalStatus.choices,
+        default=MasterApprovalStatus.APPROVED,
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_reason = models.CharField(max_length=255, blank=True)
     is_online = models.BooleanField(default=False)
     is_available = models.BooleanField(default=True)
     lat = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
@@ -65,6 +78,10 @@ class Master(TimeStampedUUIDModel):
     @property
     def role(self):
         return "master"
+
+    @property
+    def is_approved(self):
+        return self.approval_status == MasterApprovalStatus.APPROVED
 
     @property
     def full_name(self):

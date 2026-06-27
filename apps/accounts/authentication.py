@@ -2,7 +2,7 @@ from rest_framework import authentication, exceptions
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
 
-from apps.accounts.models import Client, Master
+from apps.accounts.models import Client, Master, MasterApprovalStatus
 
 
 class RoleJWTAuthentication(authentication.BaseAuthentication):
@@ -25,8 +25,11 @@ class RoleJWTAuthentication(authentication.BaseAuthentication):
         model = Master if role == "master" else Client if role == "client" else None
         if not model or not subject_id:
             raise exceptions.AuthenticationFailed("Invalid token role")
+        lookup = {"id": subject_id, "is_active": True}
+        if role == "master":
+            lookup["approval_status"] = MasterApprovalStatus.APPROVED
         try:
-            user = model.objects.get(id=subject_id, is_active=True)
+            user = model.objects.get(**lookup)
         except model.DoesNotExist as exc:
             raise exceptions.AuthenticationFailed("User not found") from exc
         return user, token
