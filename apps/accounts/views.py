@@ -11,6 +11,7 @@ from apps.accounts.serializers import (
     LogoutSerializer,
     MasterLoginSerializer,
     MasterProfileSerializer,
+    MasterRegisterSerializer,
     RefreshSerializer,
     SendOTPSerializer,
     VerifyOTPSerializer,
@@ -78,6 +79,59 @@ class MasterLoginView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         return success_response(serializer.save())
+
+
+@extend_schema(
+    tags=["Master Auth"],
+    summary="Master ariza qoldirish",
+    description=(
+        "Usta appga birinchi kirganda ism, familiya va telefon raqamini qoldiradi. Ariza `pending` holatda "
+        "yaratiladi. Admin tasdiqlab password bergandan keyin `POST /master/auth/login/` ishlaydi."
+    ),
+    examples=[
+        OpenApiExample(
+            "Master register request",
+            value={
+                "first_name": "Ali",
+                "last_name": "Karimov",
+                "phone": "+998901112233",
+                "specialization": "Konditsioner ustasi",
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Master register success",
+            value={
+                "success": True,
+                "message": "Arizangiz qabul qilindi. Admin tasdiqlagandan keyin login parol beriladi.",
+                "data": {
+                    "id": "uuid",
+                    "first_name": "Ali",
+                    "last_name": "Karimov",
+                    "phone": "+998901112233",
+                    "specialization": "Konditsioner ustasi",
+                    "approval_status": "pending",
+                    "created_at": "2026-06-27T10:00:00+05:00",
+                },
+            },
+            response_only=True,
+        ),
+    ],
+)
+class MasterRegisterView(generics.GenericAPIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    serializer_class = MasterRegisterSerializer
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return success_response(
+            serializer.data,
+            message="Arizangiz qabul qilindi. Admin tasdiqlagandan keyin login parol beriladi.",
+            status=201,
+        )
 
 
 @extend_schema(

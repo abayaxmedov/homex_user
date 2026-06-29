@@ -1,7 +1,7 @@
 from channels.db import database_sync_to_async
 from rest_framework_simplejwt.tokens import AccessToken
 
-from apps.accounts.models import Client, Master
+from apps.accounts.models import Client, Master, MasterApprovalStatus
 
 
 @database_sync_to_async
@@ -12,7 +12,10 @@ def get_role_user(token_value):
         model = Master if role == "master" else Client if role == "client" else None
         if not model:
             return None
-        return model.objects.filter(id=token.get("sub"), is_active=True).first()
+        queryset = model.objects.filter(id=token.get("sub"), is_active=True)
+        if role == "master":
+            queryset = queryset.filter(approval_status=MasterApprovalStatus.APPROVED)
+        return queryset.first()
     except Exception:
         return None
 

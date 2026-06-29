@@ -2,7 +2,7 @@ from django.core.cache import cache
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.accounts.models import Client, Master, OTPRecord
+from apps.accounts.models import Client, Master, MasterApprovalStatus, OTPRecord
 from apps.accounts.serializers import SendOTPSerializer, VerifyOTPSerializer
 from apps.accounts.tokens import issue_role_tokens
 
@@ -57,6 +57,46 @@ def test_otp_blocks_after_five_wrong_attempts(settings, db):
         assert not serializer.is_valid()
 
     assert cache.get(f"otp:block:{phone}") is True
+
+
+def test_master_register_waits_for_admin_approval(db):
+    api = APIClient()
+
+    register = api.post(
+        "/api/v1/master/auth/register/",
+        {
+            "first_name": "Ali",
+            "last_name": "Karimov",
+            "phone": "+998901110000",
+            "specialization": "Konditsioner ustasi",
+        },
+        format="json",
+    )
+    blocked_login = api.post(
+        "/api/v1/master/auth/login/",
+        {"phone": "+998901110000", "password": "1234"},
+        format="json",
+    )
+    master = Master.objects.get(phone="+998901110000")
+    assert register.status_code == 201
+    assert register.data["data"]["approval_status"] == MasterApprovalStatus.PENDING
+    assert master.is_active is False
+    assert master.password == ""
+    assert blocked_login.status_code == 400
+    assert "tasdig'ini kutmoqda" in str(blocked_login.data)
+
+    master.approval_status = MasterApprovalStatus.APPROVED
+    master.is_active = True
+    master.password = "1234"
+    master.save(update_fields=["approval_status", "is_active", "password", "updated_at"])
+    approved_login = api.post(
+        "/api/v1/master/auth/login/",
+        {"phone": "+998901110000", "password": "1234"},
+        format="json",
+    )
+
+    assert approved_login.status_code == 200
+    assert approved_login.data["data"]["access_token"]
 
 
 def test_bearer_token_takes_precedence_over_admin_session(django_admin_user, client_user):

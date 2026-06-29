@@ -4,6 +4,7 @@ from apps.accounts import views
 
 
 auth_patterns = [
+    path("register/", views.MasterRegisterView.as_view(), name="master-register"),
     path("login/", views.MasterLoginView.as_view(), name="master-login"),
     path("refresh/", views.MasterRefreshView.as_view(), name="master-refresh"),
     path("logout/", views.MasterLogoutView.as_view(), name="master-logout"),
