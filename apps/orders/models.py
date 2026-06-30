@@ -19,6 +19,46 @@ class PaymentType(models.TextChoices):
     PLASTIC = "plastic", "Plastik"
 
 
+class HomeBanner(TimeStampedUUIDModel):
+    key = models.SlugField(max_length=80, unique=True)
+    badge_text = models.CharField(max_length=120, blank=True)
+    title = models.CharField(max_length=180)
+    discount_percent = models.PositiveSmallIntegerField(null=True, blank=True)
+    cta_label = models.CharField(max_length=80, blank=True)
+    cta_action = models.CharField(max_length=80, blank=True)
+    target_type = models.CharField(max_length=50, default="services")
+    target_value = models.CharField(max_length=160, blank=True)
+    banner_image = models.ImageField(upload_to="home/banners/", null=True, blank=True)
+    external_banner_url = models.URLField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ("sort_order", "-created_at")
+
+    def __str__(self):
+        return self.title
+
+    def as_home_payload(self, request=None):
+        banner_url = self.external_banner_url or None
+        if self.banner_image:
+            banner_url = self.banner_image.url
+            if request is not None:
+                banner_url = request.build_absolute_uri(banner_url)
+
+        return {
+            "id": self.key,
+            "badge_text": self.badge_text,
+            "title": self.title,
+            "discount_percent": self.discount_percent,
+            "cta_label": self.cta_label,
+            "cta_action": self.cta_action,
+            "target": {"type": self.target_type, "value": self.target_value or None},
+            "banner_url": banner_url,
+            "is_active": self.is_active,
+        }
+
+
 class Order(TimeStampedUUIDModel):
     client = models.ForeignKey("accounts.Client", on_delete=models.CASCADE, related_name="orders")
     master = models.ForeignKey(
@@ -40,7 +80,16 @@ class Order(TimeStampedUUIDModel):
     inventory_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     bonus_used = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    before_photo = models.ImageField(upload_to="orders/before/", null=True, blank=True)
     completion_photo = models.ImageField(upload_to="orders/completions/", null=True, blank=True)
+    receipt_approved_at = models.DateTimeField(null=True, blank=True)
+    receipt_approved_by = models.ForeignKey(
+        "accounts.Master",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_order_receipts",
+    )
     cancel_reason = models.CharField(max_length=255, blank=True)
     rejected_reason = models.CharField(max_length=255, blank=True)
 

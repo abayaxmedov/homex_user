@@ -1,0 +1,26 @@
+{% extends "admin/change_form.html" %}
+{% load i18n static %}
+
+{% block after_related_objects %}
+<div class="module aligned">
+  <h2>{% trans "Chat Messages" %}</h2>
+  <div
+    id="support-admin-chat-messages"
+    data-chat-id="{{ admin_chat_id|default:'' }}"
+    style="border:1px solid #ddd;padding:10px;height:320px;overflow:auto;background:#fff;color:#111827;margin-bottom:10px;"
+  >
+    <p style="color:#999">Loading messages...</p>
+  </div>
+  <script id="support-initial-messages" type="application/json">{{ initial_messages|default:'[]'|safe }}</script>
+  <script src="{% static 'support/admin_chat.js' %}"></script>
+
+  <h2>{% trans "Reply as Admin" %}</h2>
+  <form id="support-admin-reply-form" method="post" action="" style="margin-top:10px;">
+    {% csrf_token %}
+    <textarea id="support-admin-reply-content" name="reply_content" rows="3" cols="80" style="width:100%;color:#111827;background:#fff;border:1px solid #9ca3af;border-radius:4px;padding:8px;"></textarea>
+    <br>
+    <input id="support-admin-reply-send" type="submit" class="default" value="{% trans "Send reply" %}">
+  </form>
+</div>
+{{ block.super }}
+{% endblock %}

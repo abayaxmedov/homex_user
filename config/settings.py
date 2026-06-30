@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.support",
     "apps.integrations",
+    "apps.internal_api",
+    "apps.web",
 ]
 
 MIDDLEWARE = [
@@ -198,6 +200,7 @@ CLIENT_ACCESS_DAYS = ACCESS_TOKEN_DAYS
 CLIENT_REFRESH_DAYS = REFRESH_TOKEN_DAYS
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
+HOMEX_INTERNAL_API_TOKEN = os.getenv("HOMEX_INTERNAL_API_TOKEN", "dev-internal-token" if DEBUG else "")
 
 UNFOLD = {
     "SITE_TITLE": "HomeX Admin",
@@ -263,7 +266,12 @@ UNFOLD = {
                     {
                         "title": "Support chat",
                         "icon": "support_agent",
-                        "link": reverse_lazy("admin:support_supportmessage_changelist"),
+                        "link": reverse_lazy("admin:support_supportchat_changelist"),
+                    },
+                    {
+                        "title": "Home banners",
+                        "icon": "view_carousel",
+                        "link": reverse_lazy("admin:orders_homebanner_changelist"),
                     },
                 ],
             },

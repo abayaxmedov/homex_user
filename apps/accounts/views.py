@@ -1,4 +1,5 @@
 from drf_spectacular.utils import OpenApiExample, extend_schema, extend_schema_view
+from django.utils import timezone
 from rest_framework import generics, permissions
 
 from apps.accounts.models import Client, FCMDevice, Master
@@ -18,6 +19,14 @@ from apps.accounts.serializers import (
 )
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
+
+
+def app_language_items(active_code="uz"):
+    return [
+        {"code": "uz", "label": "O'zbekcha", "is_active": active_code == "uz"},
+        {"code": "ru", "label": "Russkiy", "is_active": active_code == "ru"},
+        {"code": "en", "label": "English", "is_active": active_code == "en"},
+    ]
 
 
 CLIENT_PROFILE_RESPONSE_EXAMPLE = {
@@ -315,6 +324,90 @@ class ClientProfileView(EnvelopeMixin, generics.RetrieveUpdateAPIView):
         return self.request.user
 
 
+@extend_schema(tags=["Client App"], summary="Client app bootstrap")
+class ClientAppBootstrapView(generics.GenericAPIView):
+    permission_classes = [IsClient]
+    serializer_class = ClientSerializer
+
+    def get(self, request):
+        from django.db.models import Count
+
+        from apps.market.models import MarketCategory
+        from apps.market.serializers import MarketCategoryListSerializer
+        from apps.notifications.models import Notification
+        from apps.orders.models import Order, OrderStatus, PaymentType
+        from apps.orders.serializers import OrderSerializer
+        from apps.orders.views import get_home_banners
+        from apps.profiles.models import Tariff
+        from apps.profiles.serializers import ClientAddressSerializer, ClientDeviceSerializer, TariffSerializer
+        from apps.services.models import ServiceCategory
+        from apps.services.serializers import ServiceCategorySerializer
+
+        active_orders = (
+            Order.objects.filter(client=request.user)
+            .exclude(status__in=[OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REJECTED])
+            .select_related("service", "master", "tracking")[:5]
+        )
+        recent_orders = Order.objects.filter(client=request.user).select_related("service", "master", "tracking")[:5]
+        data = {
+            "profile": ClientSerializer(request.user).data,
+            "home": {
+                "banners": get_home_banners(request),
+                "services": ServiceCategorySerializer(
+                    ServiceCategory.objects.filter(is_active=True).prefetch_related("services__prices"),
+                    many=True,
+                    context={"request": request},
+                ).data,
+                "active_orders": OrderSerializer(active_orders, many=True, context={"request": request}).data,
+                "recent_orders": OrderSerializer(recent_orders, many=True, context={"request": request}).data,
+                "default_address": ClientAddressSerializer(
+                    request.user.addresses.filter(is_default=True).first(), context={"request": request}
+                ).data
+                if request.user.addresses.filter(is_default=True).exists()
+                else None,
+            },
+            "profile_sections": {
+                "addresses_count": request.user.addresses.count(),
+                "devices_count": request.user.client_devices.count(),
+                "devices": ClientDeviceSerializer(
+                    request.user.client_devices.select_related("category", "address")[:5],
+                    many=True,
+                    context={"request": request},
+                ).data,
+                "tariffs": TariffSerializer(Tariff.objects.filter(is_active=True)[:6], many=True).data,
+            },
+            "market": {
+                "categories": MarketCategoryListSerializer(
+                    MarketCategory.objects.annotate(products_count=Count("marketproduct")).order_by("name")[:12],
+                    many=True,
+                ).data,
+            },
+            "counts": {
+                "active_orders": len(active_orders),
+                "unread_notifications": Notification.objects.filter(client=request.user, is_read=False).count(),
+                "devices": request.user.client_devices.count(),
+            },
+            "choices": {
+                "languages": app_language_items(request.user.language),
+                "order_statuses": [{"value": value, "label": label} for value, label in OrderStatus.choices],
+                "payment_types": [{"value": value, "label": label} for value, label in PaymentType.choices],
+            },
+            "navigation": [
+                {"key": "home", "label": "Asosiy", "endpoint": "/api/v1/client/home/"},
+                {"key": "orders", "label": "Buyurtmalar", "endpoint": "/api/v1/client/orders/"},
+                {"key": "market", "label": "Market", "endpoint": "/api/v1/client/market/"},
+                {"key": "profile", "label": "Profil", "endpoint": "/api/v1/client/profile/"},
+            ],
+            "websocket": {
+                "notifications": "/ws/client/notifications/",
+                "support": "/ws/client/support/",
+                "tracking_template": "/ws/client/track/{order_id}/",
+                "auth_header": "Authorization: Bearer {access_token}",
+            },
+        }
+        return success_response(data)
+
+
 @extend_schema(tags=["Master Profile"])
 class MasterProfileView(EnvelopeMixin, generics.RetrieveUpdateAPIView):
     permission_classes = [IsMaster]
@@ -322,6 +415,89 @@ class MasterProfileView(EnvelopeMixin, generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+@extend_schema(tags=["Master App"], summary="Master app bootstrap")
+class MasterAppBootstrapView(generics.GenericAPIView):
+    permission_classes = [IsMaster]
+    serializer_class = MasterProfileSerializer
+
+    def get(self, request):
+        from django.db.models import Avg, F, Sum
+
+        from apps.notifications.models import Notification
+        from apps.orders.models import Order, OrderStatus, PaymentType, Review
+        from apps.orders.serializers import OrderSerializer
+        from apps.wallet.models import MasterWallet, WithdrawRequest
+        from apps.wallet.serializers import MasterWalletSerializer, WithdrawRequestSerializer
+        from apps.warehouse.models import MasterInventory
+        from apps.warehouse.serializers import MasterInventorySerializer
+
+        today = timezone.localdate()
+        wallet, _ = MasterWallet.objects.get_or_create(master=request.user)
+        current_orders = Order.objects.filter(
+            master=request.user, status__in=[OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS]
+        ).select_related("service", "client", "tracking")[:5]
+        new_orders = Order.objects.filter(status=OrderStatus.NEW, master__isnull=True).select_related("service", "client")[:10]
+        completed_today = Order.objects.filter(master=request.user, status=OrderStatus.COMPLETED, scheduled_date=today)
+        data = {
+            "profile": MasterProfileSerializer(request.user).data,
+            "availability": {
+                "is_online": request.user.is_online,
+                "is_available": request.user.is_available,
+                "lat": request.user.lat,
+                "lng": request.user.lng,
+                "last_location_at": request.user.last_location_at,
+            },
+            "stats": {
+                "today_income": completed_today.aggregate(total=Sum("total_amount"))["total"] or 0,
+                "today_orders": Order.objects.filter(master=request.user, scheduled_date=today).count(),
+                "orders_count": Order.objects.filter(master=request.user).count(),
+                "new_orders_count": Order.objects.filter(status=OrderStatus.NEW, master__isnull=True).count(),
+                "in_process_orders_count": Order.objects.filter(
+                    master=request.user, status__in=[OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS]
+                ).count(),
+                "average_rating": Review.objects.filter(master=request.user).aggregate(avg=Avg("rating"))["avg"] or 0,
+                "low_stock_count": MasterInventory.objects.filter(master=request.user, quantity__lte=F("low_threshold")).count(),
+                "unread_notifications": Notification.objects.filter(master=request.user, is_read=False).count(),
+            },
+            "orders": {
+                "new": OrderSerializer(new_orders, many=True, context={"request": request}).data,
+                "current": OrderSerializer(current_orders, many=True, context={"request": request}).data,
+            },
+            "wallet": MasterWalletSerializer(wallet, context={"request": request}).data,
+            "withdraw_requests": WithdrawRequestSerializer(
+                WithdrawRequest.objects.filter(master=request.user)[:5],
+                many=True,
+                context={"request": request},
+            ).data,
+            "inventory": {
+                "low_stock": MasterInventorySerializer(
+                    MasterInventory.objects.filter(master=request.user, quantity__lte=F("low_threshold"))[:5],
+                    many=True,
+                    context={"request": request},
+                ).data
+            },
+            "choices": {
+                "languages": app_language_items(request.user.language),
+                "order_statuses": [{"value": value, "label": label} for value, label in OrderStatus.choices],
+                "payment_types": [{"value": value, "label": label} for value, label in PaymentType.choices],
+            },
+            "navigation": [
+                {"key": "home", "label": "Asosiy", "endpoint": "/api/v1/master/home/stats/"},
+                {"key": "orders", "label": "Buyurtmalar", "endpoint": "/api/v1/master/orders/"},
+                {"key": "wallet", "label": "Hamyon", "endpoint": "/api/v1/master/wallet/"},
+                {"key": "inventory", "label": "Ombor", "endpoint": "/api/v1/master/inventory/"},
+                {"key": "profile", "label": "Profil", "endpoint": "/api/v1/master/profile/"},
+            ],
+            "websocket": {
+                "tracking": "/ws/master/tracking/",
+                "notifications": "/ws/master/notifications/",
+                "support": "/ws/master/support/",
+                "auth_header": "Authorization: Bearer {access_token}",
+            },
+        }
+        return success_response(data)
 
 
 @extend_schema(tags=["Master Profile"])

@@ -8,6 +8,7 @@ urlpatterns = [
     path("<uuid:pk>/", views.ClientOrderDetailView.as_view(), name="client-order-detail"),
     path("<uuid:pk>/cancel/", views.ClientOrderCancelView.as_view(), name="client-order-cancel"),
     path("<uuid:pk>/track/", views.ClientOrderTrackView.as_view(), name="client-order-track"),
+    path("<uuid:pk>/receipt/download/", views.ClientOrderReceiptDownloadView.as_view(), name="client-order-receipt-download"),
     path("<uuid:pk>/rate/", views.ClientOrderRateView.as_view(), name="client-order-rate"),
     path("<uuid:pk>/pay/", views.ClientOrderPayView.as_view(), name="client-order-pay"),
 ]

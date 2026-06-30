@@ -1,0 +1,25 @@
+{% extends "admin/change_list.html" %}
+{% load static %}
+
+{% block content %}
+  {{ block.super }}
+
+  <div
+    id="support-chat-preview-panel"
+    style="display:none;position:fixed;right:20px;top:80px;width:380px;background:#fff;color:#111827;border:1px solid #ddd;padding:12px;box-shadow:0 6px 18px rgba(0,0,0,0.08);z-index:9999;max-height:72vh;overflow:auto;"
+  >
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Chat preview</strong>
+      <a href="#" id="support-chat-preview-close" style="color:#666;text-decoration:none;">Close</a>
+    </div>
+    <div id="support-chat-preview-messages" style="border-top:1px solid #eee;padding-top:8px;min-height:140px;">Loading...</div>
+    <div style="margin-top:10px;border-top:1px solid #f1f1f1;padding-top:8px;">
+      <textarea id="support-chat-preview-reply" rows="3" style="width:100%;color:#111827;background:#fff;border:1px solid #9ca3af;border-radius:4px;padding:8px;" placeholder="Write reply..."></textarea>
+      <div style="text-align:right;margin-top:6px;">
+        <button id="support-chat-preview-send" class="default" style="background:#0b5ed7;color:#fff;border-radius:4px;padding:6px 10px;border:none;">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{% static 'support/admin_changelist_preview.js' %}"></script>
+{% endblock %}

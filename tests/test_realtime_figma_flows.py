@@ -1,4 +1,6 @@
 from datetime import date, time
+from io import BytesIO
+from zipfile import ZipFile
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -87,6 +89,43 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
     assert complete_response.status_code == 200
     assert completed_track.data["data"]["tracking_status"] == "master_finished"
     assert completed_track.data["data"]["tracking_status_label"] == "Usta ishni tugatgan"
+    assert completed_track.data["data"]["receipt_available"] is True
+
+
+def test_client_receipt_download_requires_master_confirmation(client_api, master_api, master, client_user, service):
+    order = make_order(
+        client_user,
+        service,
+        master=master,
+        status=OrderStatus.COMPLETED,
+        service_fee="100000.00",
+        total_amount="100000.00",
+    )
+
+    blocked_download = client_api.get(reverse("client-order-receipt-download", args=[order.id]))
+    confirm_response = master_api.post(reverse("master-order-receipt-confirm", args=[order.id]))
+    download_response = client_api.get(reverse("client-order-receipt-download", args=[order.id]))
+
+    order.refresh_from_db()
+
+    assert blocked_download.status_code == 403
+    assert confirm_response.status_code == 200
+    assert confirm_response.data["data"]["receipt_status"] == "approved"
+    assert order.receipt_approved_at is not None
+    assert order.receipt_approved_by == master
+    assert download_response.status_code == 200
+    assert download_response["Content-Type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert "attachment;" in download_response["Content-Disposition"]
+
+    with ZipFile(BytesIO(download_response.content)) as docx:
+        document_xml = docx.read("word/document.xml").decode("utf-8")
+
+    assert "HomeX order check" in document_xml
+    assert "Chilonzor, Tashkent" in document_xml
+    assert service.name in document_xml
+    assert master.phone in document_xml
 
 
 def test_tracking_location_update_and_client_track_payload(master_api, client_api, master, client_user, service):

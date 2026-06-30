@@ -58,6 +58,18 @@ def tracking_state(order):
     }
 
 
+def _file_url(file_field):
+    return file_field.url if file_field else None
+
+
+def _receipt_status(order):
+    if order.receipt_approved_at:
+        return "approved"
+    if order.status == OrderStatus.COMPLETED:
+        return "pending_master_confirmation"
+    return "not_ready"
+
+
 def tracking_payload(order):
     tracking = getattr(order, "tracking", None)
     master = order.master
@@ -77,6 +89,13 @@ def tracking_payload(order):
         "tracking_step": state["step"],
         "tracking_total_steps": state["total_steps"],
         "tracking_steps": state["steps"],
+        "before_photo": _file_url(order.before_photo),
+        "completion_photo": _file_url(order.completion_photo),
+        "receipt_status": _receipt_status(order),
+        "receipt_available": order.status == OrderStatus.COMPLETED and bool(order.receipt_approved_at),
+        "receipt_download_url": f"/api/v1/client/orders/{order.id}/receipt/download/"
+        if order.status == OrderStatus.COMPLETED and order.receipt_approved_at
+        else None,
         "order_location": {"lat": order.lat, "lng": order.lng, "address": order.address_text},
         "master": MasterSummarySerializer(master).data if master else None,
         "master_contact": {"phone_number": master.phone} if master else None,
