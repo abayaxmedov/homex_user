@@ -74,10 +74,16 @@ Error response:
 |---|---|---|
 | `new` | Usta qidirilmoqda | Client buyurtma yaratgan, tracking ochilgan, hali master birikmagan. |
 | `accepted` | Usta yo'lda | Master buyurtmani oldi va location yuborishi mumkin. |
-| `in_progress` | Usta ishlamoqda | Master `/master/orders/{id}/start/` orqali ishni boshlagan. |
-| `completed` | Usta ishni tugatgan | Master yakunladi, client rating berishi mumkin. |
+| `in_progress` | Usta ishlamoqda | Master `/master/orders/{id}/start/` orqali ishni boshlagan; `before_photo` optional yuboriladi. |
+| `completed` | Usta ishni tugatgan | Master yakunladi; `completion_photo` optional yuboriladi, check tasdiqlangandan keyin client `.docx` yuklab oladi. |
 | `cancelled` | Bekor qilingan | Client bekor qilgan. |
 | `rejected` | Rad etilgan | Master rad qilgan. |
+
+## Order check flow
+
+- Master `POST /api/v1/master/orders/{id}/complete/` orqali orderni yakunlaydi va checkni tasdiqlaydi.
+- Agar order allaqachon `completed` bo'lsa, master `POST /api/v1/master/orders/{id}/receipt/confirm/` orqali checkni alohida tasdiqlashi mumkin.
+- Client faqat `receipt_status=approved` bo'lganda `GET /api/v1/client/orders/{id}/receipt/download/` orqali Word `.docx` checkni yuklab oladi.
 
 ## Payment type qiymatlari
 

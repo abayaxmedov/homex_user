@@ -2,7 +2,12 @@ from django.urls import path
 
 from apps.notifications.consumers import ClientNotificationConsumer, MasterNotificationConsumer
 from apps.orders.consumers import ClientTrackingConsumer, MasterTrackingConsumer
-from apps.support.consumers import ClientSupportConsumer, MasterSupportConsumer
+from apps.support.consumers import (
+    AdminSupportChatConsumer,
+    AdminSupportLobbyConsumer,
+    ClientSupportConsumer,
+    MasterSupportConsumer,
+)
 
 
 websocket_urlpatterns = [
@@ -12,4 +17,6 @@ websocket_urlpatterns = [
     path("ws/client/notifications/", ClientNotificationConsumer.as_asgi()),
     path("ws/master/support/", MasterSupportConsumer.as_asgi()),
     path("ws/client/support/", ClientSupportConsumer.as_asgi()),
+    path("ws/support/<uuid:chat_id>/", AdminSupportChatConsumer.as_asgi()),
+    path("ws/support/admin/lobby/", AdminSupportLobbyConsumer.as_asgi()),
 ]

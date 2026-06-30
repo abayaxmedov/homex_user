@@ -2,7 +2,8 @@ from django.urls import reverse
 
 from apps.market.models import MarketCategory, MarketFavorite, MarketOrder, MarketProduct
 from apps.notifications.models import Notification
-from apps.support.models import SupportMessage
+from apps.support.models import SupportChat, SupportMessage
+from apps.support.services import create_support_message, mark_chat_read_by_admin
 
 
 def test_market_product_order_favorite_and_listing(client_api, client_user):
@@ -139,3 +140,25 @@ def test_support_messages_are_scoped_by_role(client_api, master_api, client_user
     assert master_response.status_code == 201
     assert SupportMessage.objects.filter(client=client_user, sender_role="client").exists()
     assert SupportMessage.objects.filter(master=master, sender_role="master").exists()
+
+
+def test_support_chat_tracks_history_unread_and_admin_reply(client_api, client_user, django_admin_user):
+    create_response = client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    chat = SupportChat.objects.get(client=client_user)
+
+    history_response = client_api.get(reverse("client-support"))
+    reply = create_support_message(chat=chat, sender=django_admin_user, content="Admin javobi")
+    chat.refresh_from_db()
+    unread_after_reply = chat.unread_by_admin
+    marked = mark_chat_read_by_admin(chat)
+    chat.refresh_from_db()
+
+    assert create_response.status_code == 201
+    assert history_response.status_code == 200
+    assert str(history_response.data["results"][0]["chat"]) == str(chat.id)
+    assert history_response.data["results"][0]["content"] == "Yordam kerak"
+    assert reply.sender_role == "admin"
+    assert reply.client == client_user
+    assert unread_after_reply == 1
+    assert marked is True
+    assert chat.unread_by_admin == 0

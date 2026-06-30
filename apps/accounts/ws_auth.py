@@ -26,5 +26,8 @@ class RoleJWTAuthMiddleware:
         auth_header = headers.get(b"authorization", b"").decode()
         parts = auth_header.split()
         token = parts[1] if len(parts) == 2 and parts[0].lower() == "bearer" else None
-        scope["user"] = await get_role_user(token) if token else None
+        if token:
+            scope["user"] = await get_role_user(token)
+        elif "user" not in scope:
+            scope["user"] = None
         return await self.app(scope, receive, send)

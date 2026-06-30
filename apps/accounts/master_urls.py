@@ -13,6 +13,7 @@ auth_patterns = [
 ]
 
 urlpatterns = [
+    path("app/bootstrap/", views.MasterAppBootstrapView.as_view(), name="master-app-bootstrap"),
     path("auth/", include(auth_patterns)),
     path("home/", include("apps.orders.master_home_urls")),
     path("orders/", include("apps.orders.master_urls")),

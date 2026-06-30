@@ -1,4 +1,6 @@
 from django.db import transaction
+from django.urls import reverse
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
@@ -6,6 +8,7 @@ from apps.accounts.models import Master
 from apps.accounts.serializers import MasterSummarySerializer
 from apps.integrations.adapters import PaymentClient
 from apps.orders.models import Order, OrderInventoryUsage, OrderStatus, OrderTracking, PaymentType, Review, ReviewPhoto
+from apps.orders.receipts import order_receipt_filename
 from apps.orders.tracking import ensure_tracking, tracking_state
 from apps.services.serializers import ServiceSerializer
 from apps.wallet.models import MasterWallet, WalletTransaction
@@ -83,6 +86,10 @@ class OrderSerializer(serializers.ModelSerializer):
     payment_type_label = serializers.CharField(source="get_payment_type_display", read_only=True)
     can_cancel = serializers.SerializerMethodField(help_text="Frontend cancel button ko'rsatishi mumkinmi.")
     can_rate = serializers.SerializerMethodField(help_text="Frontend rating modal/button ko'rsatishi mumkinmi.")
+    can_download_receipt = serializers.SerializerMethodField(help_text="Client checkni yuklab olishi mumkinmi.")
+    receipt_status = serializers.SerializerMethodField()
+    receipt_download_url = serializers.SerializerMethodField()
+    receipt_filename = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -114,7 +121,13 @@ class OrderSerializer(serializers.ModelSerializer):
             "inventory_total",
             "bonus_used",
             "total_amount",
+            "before_photo",
             "completion_photo",
+            "receipt_status",
+            "receipt_approved_at",
+            "receipt_download_url",
+            "receipt_filename",
+            "can_download_receipt",
             "cancel_reason",
             "rejected_reason",
             "inventory_usages",
@@ -131,6 +144,9 @@ class OrderSerializer(serializers.ModelSerializer):
             "service_fee",
             "inventory_total",
             "total_amount",
+            "before_photo",
+            "completion_photo",
+            "receipt_approved_at",
             "created_at",
         )
         extra_kwargs = {
@@ -149,6 +165,30 @@ class OrderSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.BooleanField)
     def get_can_rate(self, obj):
         return obj.status == OrderStatus.COMPLETED and not hasattr(obj, "review")
+
+    @extend_schema_field(serializers.BooleanField)
+    def get_can_download_receipt(self, obj):
+        return obj.status == OrderStatus.COMPLETED and bool(obj.receipt_approved_at)
+
+    @extend_schema_field(serializers.CharField)
+    def get_receipt_status(self, obj):
+        if obj.receipt_approved_at:
+            return "approved"
+        if obj.status == OrderStatus.COMPLETED:
+            return "pending_master_confirmation"
+        return "not_ready"
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_receipt_download_url(self, obj):
+        if not self.get_can_download_receipt(obj):
+            return None
+        url = reverse("client-order-receipt-download", args=[obj.id])
+        request = self.context.get("request")
+        return request.build_absolute_uri(url) if request else url
+
+    @extend_schema_field(serializers.CharField)
+    def get_receipt_filename(self, obj):
+        return order_receipt_filename(obj)
 
     def _tracking_state(self, obj):
         return tracking_state(obj)
@@ -191,6 +231,32 @@ class OrderRejectSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=255)
 
 
+class OrderStartSerializer(serializers.Serializer):
+    before_photo = serializers.ImageField(required=False)
+
+    @transaction.atomic
+    def save(self, **kwargs):
+        order = self.context["order"]
+        before_photo = self.validated_data.get("before_photo")
+
+        if order.status == OrderStatus.IN_PROGRESS:
+            if before_photo:
+                order.before_photo = before_photo
+                order.save(update_fields=["before_photo", "updated_at"])
+            return order
+
+        if order.status != OrderStatus.ACCEPTED:
+            raise serializers.ValidationError({"status": "Order faqat accepted holatidan in_progress holatiga o'tadi"})
+
+        update_fields = ["status", "updated_at"]
+        order.status = OrderStatus.IN_PROGRESS
+        if before_photo:
+            order.before_photo = before_photo
+            update_fields.append("before_photo")
+        order.save(update_fields=update_fields)
+        return order
+
+
 class OrderCompleteSerializer(serializers.Serializer):
     service_fee = serializers.DecimalField(max_digits=12, decimal_places=2)
     payment_type = serializers.ChoiceField(choices=PaymentType.choices)
@@ -222,6 +288,9 @@ class OrderCompleteSerializer(serializers.Serializer):
             inventory_total += usage.total_price
         order.inventory_total = inventory_total
         order.status = OrderStatus.COMPLETED
+        if not order.receipt_approved_at:
+            order.receipt_approved_at = timezone.now()
+            order.receipt_approved_by = order.master
         order.recalculate_total()
         order.save()
         wallet, _ = MasterWallet.objects.get_or_create(master=order.master)

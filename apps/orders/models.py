@@ -80,7 +80,16 @@ class Order(TimeStampedUUIDModel):
     inventory_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     bonus_used = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    before_photo = models.ImageField(upload_to="orders/before/", null=True, blank=True)
     completion_photo = models.ImageField(upload_to="orders/completions/", null=True, blank=True)
+    receipt_approved_at = models.DateTimeField(null=True, blank=True)
+    receipt_approved_by = models.ForeignKey(
+        "accounts.Master",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_order_receipts",
+    )
     cancel_reason = models.CharField(max_length=255, blank=True)
     rejected_reason = models.CharField(max_length=255, blank=True)
 

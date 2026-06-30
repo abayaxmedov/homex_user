@@ -33,7 +33,19 @@ class OrderInventoryUsageInline(HomeXTabularInline):
 
 @admin.register(Order)
 class OrderAdmin(HomeXModelAdmin):
-    list_display = ("id", "client", "master", "service", "status", "payment_type", "total_amount", "scheduled_date")
+    list_display = (
+        "id",
+        "client",
+        "master",
+        "service",
+        "status",
+        "payment_type",
+        "total_amount",
+        "before_photo",
+        "completion_photo",
+        "receipt_approved_at",
+        "scheduled_date",
+    )
     search_fields = ("client__phone", "master__phone", "address_text", "note")
     list_filter = ("status", "payment_type", "scheduled_date")
     inlines = [OrderInventoryUsageInline]

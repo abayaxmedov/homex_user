@@ -1,11 +1,13 @@
 from django.conf import settings
 from django.db.models import Avg, F, Q, Sum
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.accounts.models import Master
 from apps.accounts.permissions import IsClient, IsMaster
@@ -16,6 +18,7 @@ from apps.common.views import EnvelopeMixin
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 from apps.orders.models import HomeBanner, Order, OrderStatus, OrderTracking, Review
+from apps.orders.receipts import DOCX_CONTENT_TYPE, build_order_receipt_docx, order_receipt_filename
 from apps.orders.serializers import (
     MasterLocationSerializer,
     MapConfigSerializer,
@@ -24,6 +27,7 @@ from apps.orders.serializers import (
     OrderCompleteSerializer,
     OrderRejectSerializer,
     OrderSerializer,
+    OrderStartSerializer,
     PaymentStartSerializer,
     ReviewSerializer,
 )
@@ -61,6 +65,11 @@ TRACKING_RESPONSE_EXAMPLE = {
         "tracking_status_label": "Usta yo'lda",
         "tracking_step": 2,
         "tracking_total_steps": 4,
+        "before_photo": "/media/orders/before/photo.jpg",
+        "completion_photo": None,
+        "receipt_status": "not_ready",
+        "receipt_available": False,
+        "receipt_download_url": None,
         "order_location": {"lat": "41.30000000", "lng": "69.25000000", "address": "Chilonzor, Tashkent"},
         "master": {"id": "master_uuid", "full_name": "Ali Usta", "rating": "4.90"},
         "master_contact": {"phone_number": "+998901112233"},
@@ -94,6 +103,22 @@ DEFAULT_HOME_BANNERS = [
 def get_home_banners(request):
     banners = [banner.as_home_payload(request) for banner in HomeBanner.objects.filter(is_active=True)]
     return banners or DEFAULT_HOME_BANNERS
+
+
+def receipt_download_url(request, order):
+    url = reverse("client-order-receipt-download", args=[order.id])
+    return request.build_absolute_uri(url) if request else url
+
+
+def approve_order_receipt(order, master):
+    if order.status != OrderStatus.COMPLETED:
+        raise ValidationError({"status": "Check faqat completed order uchun tasdiqlanadi"})
+    if order.receipt_approved_at:
+        return False
+    order.receipt_approved_at = timezone.now()
+    order.receipt_approved_by = master
+    order.save(update_fields=["receipt_approved_at", "receipt_approved_by", "updated_at"])
+    return True
 
 
 @extend_schema(tags=["Master Home"])
@@ -219,29 +244,40 @@ class MasterOrderAcceptView(generics.GenericAPIView):
 @extend_schema(
     tags=["Master Orders"],
     summary="Order ishini boshlash",
-    description="Master obyektga yetib borgach order statusini `in_progress` qiladi va client tracking socketiga yuboradi.",
+    description=(
+        "Master obyektga yetib borgach order statusini `in_progress` qiladi va client tracking socketiga yuboradi. "
+        "Multipart request bilan `before_photo` optional yuboriladi."
+    ),
+    request=OrderStartSerializer,
+    responses=OrderSerializer,
+    examples=[
+        OpenApiExample(
+            "Start order multipart fields",
+            value={"before_photo": "file"},
+            request_only=True,
+        )
+    ],
 )
 class MasterOrderStartView(generics.GenericAPIView):
     permission_classes = [IsMaster]
-    serializer_class = OrderSerializer
+    serializer_class = OrderStartSerializer
 
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, master=request.user)
-        if order.status == OrderStatus.IN_PROGRESS:
-            return success_response(OrderSerializer(order).data)
-        if order.status != OrderStatus.ACCEPTED:
-            raise ValidationError({"status": "Order faqat accepted holatidan in_progress holatiga o'tadi"})
-        order.status = OrderStatus.IN_PROGRESS
-        order.save(update_fields=["status", "updated_at"])
+        was_in_progress = order.status == OrderStatus.IN_PROGRESS
+        serializer = self.get_serializer(data=request.data, context={"order": order})
+        serializer.is_valid(raise_exception=True)
+        order = serializer.save()
         ensure_tracking(order)
-        create_notification(
-            role="client",
-            client=order.client,
-            title="Usta ishni boshladi",
-            body="Usta buyurtma bo'yicha ishni boshladi",
-            data={"order_id": str(order.id), "status": order.status},
-        )
-        broadcast_tracking(order, event_type="tracking.update")
+        if not was_in_progress:
+            create_notification(
+                role="client",
+                client=order.client,
+                title="Usta ishni boshladi",
+                body="Usta buyurtma bo'yicha ishni boshladi",
+                data={"order_id": str(order.id), "status": order.status},
+            )
+            broadcast_tracking(order, event_type="tracking.update")
         return success_response(OrderSerializer(order).data)
 
 
@@ -302,19 +338,55 @@ class MasterOrderCompleteView(generics.GenericAPIView):
             role="client",
             client=order.client,
             title="Buyurtma yakunlandi",
-            body="Usta buyurtmani yakunladi",
-            data={"order_id": str(order.id), "status": order.status, "total_amount": str(order.total_amount)},
+            body="Usta buyurtmani yakunladi. Check yuklab olishga tayyor.",
+            data={
+                "order_id": str(order.id),
+                "status": order.status,
+                "total_amount": str(order.total_amount),
+                "receipt_available": True,
+                "receipt_download_url": receipt_download_url(request, order),
+            },
         )
         broadcast_tracking(order, event_type="tracking.update")
         return success_response(
             {
-                "order": OrderSerializer(order).data,
+                "order": OrderSerializer(order, context={"request": request}).data,
                 "service_fee": order.service_fee,
                 "inventory_total": order.inventory_total,
                 "total_amount": order.total_amount,
                 "wallet_balance": getattr(wallet, "balance_cash", 0) + getattr(wallet, "balance_online", 0),
             }
         )
+
+
+@extend_schema(
+    tags=["Master Orders"],
+    summary="Checkni tasdiqlash va clientga ochish",
+    description="Order completed bo'lgandan keyin master checkni tasdiqlaydi. Shundan keyin client Word checkni yuklab oladi.",
+    request=None,
+    responses=OrderSerializer,
+)
+class MasterOrderReceiptConfirmView(generics.GenericAPIView):
+    permission_classes = [IsMaster]
+    serializer_class = OrderSerializer
+
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, master=request.user)
+        approved_now = approve_order_receipt(order, request.user)
+        if approved_now:
+            create_notification(
+                role="client",
+                client=order.client,
+                title="Check tayyor",
+                body="Usta checkni tasdiqladi. Endi Word faylni yuklab olishingiz mumkin.",
+                data={
+                    "order_id": str(order.id),
+                    "status": order.status,
+                    "receipt_available": True,
+                    "receipt_download_url": receipt_download_url(request, order),
+                },
+            )
+        return success_response(OrderSerializer(order, context={"request": request}).data)
 
 
 @extend_schema(tags=["Master Orders"])
@@ -623,6 +695,33 @@ class ClientOrderTrackView(generics.GenericAPIView):
             Order.objects.select_related("master", "tracking", "client"), pk=pk, client=request.user
         )
         return success_response(tracking_payload(order))
+
+
+@extend_schema(
+    tags=["Client Orders"],
+    summary="Order check Word faylini yuklab olish",
+    description="Client faqat usta checkni tasdiqlagandan keyin `.docx` checkni yuklab oladi.",
+    responses={200: OpenApiTypes.BINARY},
+)
+class ClientOrderReceiptDownloadView(generics.GenericAPIView):
+    permission_classes = [IsClient]
+    serializer_class = OrderSerializer
+
+    def get(self, request, pk):
+        order = get_object_or_404(
+            Order.objects.select_related("client", "master", "service__category").prefetch_related(
+                "inventory_usages__inventory__warehouse_product"
+            ),
+            pk=pk,
+            client=request.user,
+        )
+        if order.status != OrderStatus.COMPLETED or not order.receipt_approved_at:
+            raise PermissionDenied("Check hali usta tomonidan tasdiqlanmagan")
+
+        content = build_order_receipt_docx(order, request=request)
+        response = HttpResponse(content, content_type=DOCX_CONTENT_TYPE)
+        response["Content-Disposition"] = f'attachment; filename="{order_receipt_filename(order)}"'
+        return response
 
 
 @extend_schema(tags=["Client Orders"])
