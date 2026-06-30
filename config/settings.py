@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "apps.profiles",
     "apps.notifications",
     "apps.support",
+    "apps.dashboard",
     "apps.integrations",
     "apps.internal_api",
     "apps.web",

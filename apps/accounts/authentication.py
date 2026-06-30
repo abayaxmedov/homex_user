@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from rest_framework import authentication, exceptions
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
@@ -22,8 +23,18 @@ class RoleJWTAuthentication(authentication.BaseAuthentication):
 
         role = token.get("role")
         subject_id = token.get("sub")
+        if not subject_id:
+            raise exceptions.AuthenticationFailed("Invalid token role")
+        if role == "admin":
+            user_model = get_user_model()
+            try:
+                user = user_model.objects.get(id=subject_id, is_active=True, is_staff=True)
+            except user_model.DoesNotExist as exc:
+                raise exceptions.AuthenticationFailed("Admin user not found") from exc
+            return user, token
+
         model = Master if role == "master" else Client if role == "client" else None
-        if not model or not subject_id:
+        if not model:
             raise exceptions.AuthenticationFailed("Invalid token role")
         lookup = {"id": subject_id, "is_active": True}
         if role == "master":
