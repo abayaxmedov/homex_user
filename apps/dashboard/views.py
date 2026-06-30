@@ -82,7 +82,23 @@ from .services import (
 )
 
 
-DASHBOARD_TAG = "Dashboard"
+DASHBOARD_AUTH_TAG = "Dashboard - Auth"
+DASHBOARD_OVERVIEW_TAG = "Dashboard - Dashboard"
+DASHBOARD_CLIENTS_TAG = "Dashboard - Mijozlar"
+DASHBOARD_STAFF_TAG = "Dashboard - Xodim"
+DASHBOARD_MAPS_TAG = "Dashboard - Xaritalar"
+DASHBOARD_MASTERS_TAG = "Dashboard - Ustalar"
+DASHBOARD_ORDERS_TAG = "Dashboard - Buyurtmalar"
+DASHBOARD_SERVICES_TAG = "Dashboard - Xizmatlar va Narxlar"
+DASHBOARD_TARIFFS_TAG = "Dashboard - Tariflar"
+DASHBOARD_NOTIFICATIONS_TAG = "Dashboard - Bildirishnomalar"
+DASHBOARD_EXPENSES_TAG = "Dashboard - Xarajatlar"
+DASHBOARD_MARKET_TAG = "Dashboard - Marketplace"
+DASHBOARD_WAREHOUSE_TAG = "Dashboard - Ombor"
+DASHBOARD_LIVE_TAG = "Dashboard - Jonli Kuzatuv"
+DASHBOARD_SUPPORT_TAG = "Dashboard - Xabarlar"
+DASHBOARD_FINANCE_TAG = "Dashboard - Moliya Hisobotlar"
+DASHBOARD_SETTINGS_TAG = "Dashboard - Sozlamalar"
 ACTIVE_ORDER_STATUSES = [OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS]
 
 
@@ -104,9 +120,9 @@ class DashboardPermissionMixin:
 
 
 @extend_schema(
-    tags=[DASHBOARD_TAG],
+    tags=[DASHBOARD_AUTH_TAG],
     summary="Dashboard login",
-    description="Django staff/admin user uchun access_token va refresh_token qaytaradi.",
+    description="Dashboardga kirish uchun Django staff/admin user login va parolini qabul qiladi, access_token va refresh_token qaytaradi.",
     request=DashboardLoginSerializer,
     examples=[
         OpenApiExample(
@@ -127,9 +143,9 @@ class DashboardLoginAPIView(generics.GenericAPIView):
 
 
 @extend_schema(
-    tags=[DASHBOARD_TAG],
+    tags=[DASHBOARD_AUTH_TAG],
     summary="Dashboard token refresh",
-    description="Dashboard refresh_token orqali yangi access/refresh token oladi.",
+    description="Dashboard access token muddati tugaganda refresh_token orqali yangi access_token va refresh_token olish uchun ishlatiladi.",
     request=DashboardRefreshSerializer,
 )
 class DashboardRefreshAPIView(generics.GenericAPIView):
@@ -143,9 +159,9 @@ class DashboardRefreshAPIView(generics.GenericAPIView):
 
 
 @extend_schema(
-    tags=[DASHBOARD_TAG],
+    tags=[DASHBOARD_AUTH_TAG],
     summary="Dashboard logout",
-    description="Refresh tokenni blacklist qiladi.",
+    description="Dashboarddan chiqishda refresh tokenni blacklist qiladi, frontend local storage/sessiondagi tokenlarni ham tozalashi kerak.",
     request=DashboardLogoutSerializer,
 )
 class DashboardLogoutAPIView(DashboardPermissionMixin, generics.GenericAPIView):
@@ -158,7 +174,11 @@ class DashboardLogoutAPIView(DashboardPermissionMixin, generics.GenericAPIView):
         return success_response(message="Logged out")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard admin profile")
+@extend_schema(
+    tags=[DASHBOARD_AUTH_TAG],
+    summary="Dashboard admin profile",
+    description="Hozir login bo'lgan dashboard admin/staff user ma'lumotlarini qaytaradi.",
+)
 class DashboardMeAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveAPIView):
     serializer_class = DashboardMeSerializer
 
@@ -166,7 +186,11 @@ class DashboardMeAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.Retri
         return self.request.user
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard meta")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Dashboard meta",
+    description="Dashboard header va umumiy UI uchun bugungi sana, hafta kuni, timezone, til variantlari va order statuslarini qaytaradi.",
+)
 class DashboardMetaAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -189,8 +213,9 @@ class DashboardMetaAPIView(DashboardPermissionMixin, generics.GenericAPIView):
 
 
 @extend_schema(
-    tags=[DASHBOARD_TAG],
+    tags=[DASHBOARD_OVERVIEW_TAG],
     summary="Dashboard stats cards",
+    description="Dashboard bosh sahifasidagi cardlar uchun bugungi buyurtmalar, faol ustalar, kunlik daromad va xarajat statistikalarini qaytaradi.",
     parameters=[OpenApiParameter("date", str, OpenApiParameter.QUERY, required=False)],
 )
 class DashboardStatsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
@@ -208,7 +233,11 @@ class DashboardStatsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
         return success_response(data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Orders by service chart")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Orders by service chart",
+    description="Dashboard donut charti uchun xizmatlar kesimida buyurtmalar soni va foiz taqsimotini qaytaradi.",
+)
 class DashboardOrdersByServiceAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DateRangeQuerySerializer
 
@@ -221,7 +250,11 @@ class DashboardOrdersByServiceAPIView(DashboardPermissionMixin, generics.Generic
         return success_response(data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Weekly orders chart")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Weekly orders chart",
+    description="Dashboarddagi 7 kunlik buyurtmalar grafigi uchun kunma-kun statuslar kesimidagi statistikani qaytaradi.",
+)
 class DashboardWeeklyOrdersAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DashboardQuerySerializer
 
@@ -232,7 +265,11 @@ class DashboardWeeklyOrdersAPIView(DashboardPermissionMixin, generics.GenericAPI
         return success_response(get_weekly_orders(target_date))
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Income dynamics chart")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Income dynamics chart",
+    description="Dashboard daromad dinamikasi grafigi uchun oxirgi 7 kunlik completed order daromadlarini qaytaradi.",
+)
 class DashboardIncomeDynamicsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DashboardQuerySerializer
 
@@ -243,7 +280,11 @@ class DashboardIncomeDynamicsAPIView(DashboardPermissionMixin, generics.GenericA
         return success_response(get_income_dynamics(target_date))
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Income and expense chart")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Income and expense chart",
+    description="Dashboard moliya grafigi uchun yil bo'yicha oyma-oy daromad va xarajat summalarini qaytaradi.",
+)
 class DashboardIncomeExpenseAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -255,7 +296,11 @@ class DashboardIncomeExpenseAPIView(DashboardPermissionMixin, generics.GenericAP
         return success_response(get_income_expense(year))
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard today orders")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Dashboard today orders",
+    description="Dashboard bosh sahifasidagi 'Bugungi faol buyurtmalar' jadvali uchun active orderlar ro'yxatini qaytaradi.",
+)
 class DashboardTodayOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
     serializer_class = DashboardOrderSerializer
 
@@ -270,7 +315,11 @@ class DashboardTodayOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, gener
         )
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard overview")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Dashboard overview",
+    description="Bosh sahifa uchun barcha asosiy data: meta, admin user, stats cardlar, chartlar, bugungi orderlar va notification countni bitta response'da qaytaradi.",
+)
 class DashboardOverviewAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DashboardQuerySerializer
 
@@ -309,7 +358,11 @@ class DashboardOverviewAPIView(DashboardPermissionMixin, generics.GenericAPIView
         return success_response(data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard global search")
+@extend_schema(
+    tags=[DASHBOARD_OVERVIEW_TAG],
+    summary="Dashboard global search",
+    description="Headerdagi global qidiruv uchun xizmat, buyurtma, mijoz va usta natijalarini umumiy ro'yxat ko'rinishida qaytaradi.",
+)
 class DashboardSearchAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -351,7 +404,11 @@ class DashboardSearchAPIView(DashboardPermissionMixin, generics.GenericAPIView):
         return success_response({"query": query, "results": results[:10]})
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard clients list/create")
+@extend_schema(
+    tags=[DASHBOARD_CLIENTS_TAG],
+    summary="Dashboard clients list/create",
+    description="Mijozlar sahifasi uchun clientlar ro'yxatini filter/search bilan qaytaradi yoki dashboarddan yangi client yaratadi.",
+)
 class DashboardClientListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardClientSerializer
 
@@ -368,13 +425,21 @@ class DashboardClientListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, 
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard client detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_CLIENTS_TAG],
+    summary="Dashboard client detail/update/delete",
+    description="Mijoz detail drawer/modal uchun bitta client ma'lumotini ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardClientDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardClientSerializer
     queryset = Client.objects.select_related("current_tariff").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Client orders")
+@extend_schema(
+    tags=[DASHBOARD_CLIENTS_TAG],
+    summary="Client orders",
+    description="Tanlangan mijozga tegishli barcha buyurtmalar tarixini jadvalda ko'rsatish uchun ishlatiladi.",
+)
 class DashboardClientOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
     serializer_class = DashboardOrderSerializer
 
@@ -388,7 +453,11 @@ class DashboardClientOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, gene
         )
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard masters list/create")
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Dashboard masters list/create",
+    description="Ustalar sahifasi uchun ustalar ro'yxatini search/status filter bilan qaytaradi yoki yangi usta yaratadi.",
+)
 class DashboardMasterListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMasterSerializer
 
@@ -414,13 +483,21 @@ class DashboardMasterListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, 
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard master detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Dashboard master detail/update/delete",
+    description="Usta profil/detail oynasi uchun bitta ustani ko'rish, ma'lumotlarini yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardMasterDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardMasterSerializer
     queryset = Master.objects.all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Available masters")
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Available masters",
+    description="Buyurtmaga usta biriktirish modalida ko'rsatish uchun online va available ustalar ro'yxatini qaytaradi.",
+)
 class DashboardAvailableMastersAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
     serializer_class = DashboardMasterSerializer
 
@@ -428,7 +505,11 @@ class DashboardAvailableMastersAPIView(DashboardPermissionMixin, EnvelopeMixin, 
         return Master.objects.filter(is_active=True, is_online=True, is_available=True).order_by("first_name")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Update master location")
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Update master location",
+    description="Admin dashboarddan usta lokatsiyasi va online/available holatini yangilash uchun ishlatiladi.",
+)
 class DashboardMasterLocationAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DashboardMasterLocationSerializer
 
@@ -440,7 +521,11 @@ class DashboardMasterLocationAPIView(DashboardPermissionMixin, generics.GenericA
         return success_response(DashboardMasterSerializer(master, context={"request": request}).data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Update master status")
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Update master status",
+    description="Usta statusini active, busy, inactive yoki blocked holatlariga o'tkazish uchun ishlatiladi.",
+)
 class DashboardMasterStatusAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DashboardMasterStatusSerializer
 
@@ -452,7 +537,11 @@ class DashboardMasterStatusAPIView(DashboardPermissionMixin, generics.GenericAPI
         return success_response(DashboardMasterSerializer(master, context={"request": request}).data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Master orders")
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Master orders",
+    description="Tanlangan ustaga biriktirilgan buyurtmalar tarixini ko'rsatish uchun ishlatiladi.",
+)
 class DashboardMasterOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
     serializer_class = DashboardOrderSerializer
 
@@ -466,7 +555,11 @@ class DashboardMasterOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, gene
         )
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard orders list/create")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Dashboard orders list/create",
+    description="Buyurtmalar sahifasi uchun orderlar ro'yxatini search/status/payment/date filterlar bilan qaytaradi yoki dashboarddan yangi order yaratadi.",
+)
 class DashboardOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardOrderSerializer
 
@@ -508,13 +601,21 @@ class DashboardOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, g
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard order detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Dashboard order detail/update/delete",
+    description="Buyurtma detail oynasi uchun bitta orderni ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardOrderDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardOrderSerializer
     queryset = Order.objects.select_related("client", "master", "service", "service__category", "address", "tracking").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard order board")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Dashboard order board",
+    description="Buyurtmalarni status ustunlari bo'yicha board/kanban ko'rinishida chiqarish uchun statuslarga ajratilgan ro'yxat qaytaradi.",
+)
 class DashboardOrderBoardAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -538,7 +639,11 @@ class DashboardOrderBoardAPIView(DashboardPermissionMixin, generics.GenericAPIVi
         return success_response({"columns": data})
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Update order status")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Update order status",
+    description="Buyurtma statusini yangi, qabul qilingan, jarayonda, yakunlangan, bekor qilingan yoki rad etilgan holatga o'zgartirish uchun ishlatiladi.",
+)
 class DashboardOrderStatusAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DashboardOrderStatusSerializer
 
@@ -550,7 +655,11 @@ class DashboardOrderStatusAPIView(DashboardPermissionMixin, generics.GenericAPIV
         return success_response(DashboardOrderSerializer(order, context={"request": request}).data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Assign order master")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Assign order master",
+    description="Usta biriktirish modalidan orderga master biriktirish yoki master qiymatini yangilash uchun ishlatiladi.",
+)
 class DashboardOrderAssignAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = DashboardOrderAssignSerializer
 
@@ -562,7 +671,11 @@ class DashboardOrderAssignAPIView(DashboardPermissionMixin, generics.GenericAPIV
         return success_response(DashboardOrderSerializer(order, context={"request": request}).data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Order tracking snapshot")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Order tracking snapshot",
+    description="Buyurtma tracking oynasi uchun usta lokatsiyasi, masofa, ETA va tracking step ma'lumotlarini qaytaradi.",
+)
 class DashboardOrderTrackingAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -571,7 +684,11 @@ class DashboardOrderTrackingAPIView(DashboardPermissionMixin, generics.GenericAP
         return success_response(DashboardOrderSerializer(order, context={"request": request}).data["tracking"])
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Service categories list/create")
+@extend_schema(
+    tags=[DASHBOARD_SERVICES_TAG],
+    summary="Service categories list/create",
+    description="Xizmatlar va Narxlar sahifasi uchun service category ro'yxatini qaytaradi yoki yangi category yaratadi.",
+)
 class DashboardServiceCategoryListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardServiceCategorySerializer
 
@@ -588,13 +705,21 @@ class DashboardServiceCategoryListCreateAPIView(DashboardPermissionMixin, Envelo
         return queryset.order_by("sort_order", "name")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Service category detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_SERVICES_TAG],
+    summary="Service category detail/update/delete",
+    description="Service category detail/edit modal uchun categoryni ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardServiceCategoryDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardServiceCategorySerializer
     queryset = ServiceCategory.objects.all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Services list/create")
+@extend_schema(
+    tags=[DASHBOARD_SERVICES_TAG],
+    summary="Services list/create",
+    description="Xizmatlar jadvali/kartalari uchun service ro'yxatini qaytaradi yoki yangi service yaratadi.",
+)
 class DashboardServiceListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardServiceSerializer
 
@@ -614,13 +739,21 @@ class DashboardServiceListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin,
         return queryset.order_by("category__sort_order", "name")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Service detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_SERVICES_TAG],
+    summary="Service detail/update/delete",
+    description="Service detail/edit modal uchun xizmatni ko'rish, yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardServiceDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardServiceSerializer
     queryset = Service.objects.select_related("category").prefetch_related("prices").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Tariffs list/create")
+@extend_schema(
+    tags=[DASHBOARD_TARIFFS_TAG],
+    summary="Tariffs list/create",
+    description="Tariflar sahifasidagi tarif kartalari uchun tariflar ro'yxatini qaytaradi yoki yangi tarif yaratadi.",
+)
 class DashboardTariffListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardTariffSerializer
 
@@ -632,13 +765,21 @@ class DashboardTariffListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, 
         return queryset.order_by("sort_order", "price", "name")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Tariff detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_TARIFFS_TAG],
+    summary="Tariff detail/update/delete",
+    description="Tarif detail/edit modal uchun tarifni ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardTariffDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardTariffSerializer
     queryset = Tariff.objects.prefetch_related("features").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Notifications list/create")
+@extend_schema(
+    tags=[DASHBOARD_NOTIFICATIONS_TAG],
+    summary="Notifications list/create",
+    description="Dashboard notification listi uchun bildirishnomalarni qaytaradi yoki client/masterga yangi notification yaratadi.",
+)
 class DashboardNotificationListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardNotificationSerializer
 
@@ -653,13 +794,21 @@ class DashboardNotificationListCreateAPIView(DashboardPermissionMixin, EnvelopeM
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Notification detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_NOTIFICATIONS_TAG],
+    summary="Notification detail/update/delete",
+    description="Bitta notificationni ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardNotificationDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardNotificationSerializer
     queryset = Notification.objects.select_related("client", "master").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Notification unread count")
+@extend_schema(
+    tags=[DASHBOARD_NOTIFICATIONS_TAG],
+    summary="Notification unread count",
+    description="Header/bell icon uchun o'qilmagan notificationlar sonini qaytaradi.",
+)
 class DashboardNotificationUnreadCountAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -667,7 +816,11 @@ class DashboardNotificationUnreadCountAPIView(DashboardPermissionMixin, generics
         return success_response({"unread_count": Notification.objects.filter(is_read=False).count()})
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Mark notification read")
+@extend_schema(
+    tags=[DASHBOARD_NOTIFICATIONS_TAG],
+    summary="Mark notification read",
+    description="Tanlangan notificationni o'qilgan holatga o'tkazadi.",
+)
 class DashboardNotificationReadAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -678,7 +831,11 @@ class DashboardNotificationReadAPIView(DashboardPermissionMixin, generics.Generi
         return success_response(DashboardNotificationSerializer(notification, context={"request": request}).data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Mark all notifications read")
+@extend_schema(
+    tags=[DASHBOARD_NOTIFICATIONS_TAG],
+    summary="Mark all notifications read",
+    description="Dashboarddagi barcha o'qilmagan notificationlarni o'qilgan holatga o'tkazadi.",
+)
 class DashboardNotificationReadAllAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -687,7 +844,11 @@ class DashboardNotificationReadAllAPIView(DashboardPermissionMixin, generics.Gen
         return success_response(message="All notifications marked as read")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Expenses list/create")
+@extend_schema(
+    tags=[DASHBOARD_EXPENSES_TAG],
+    summary="Expenses list/create",
+    description="Xarajatlar sahifasidagi 'Usta xarajatlari' tabi uchun master expense ro'yxatini qaytaradi yoki yangi xarajat yaratadi.",
+)
 class DashboardExpenseListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardExpenseSerializer
 
@@ -705,13 +866,21 @@ class DashboardExpenseListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin,
         return queryset.order_by("-date", "-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Expense detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_EXPENSES_TAG],
+    summary="Expense detail/update/delete",
+    description="Usta xarajati detail/edit modalida xarajatni ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardExpenseDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardExpenseSerializer
     queryset = MasterExpense.objects.select_related("master").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard staff list/create")
+@extend_schema(
+    tags=[DASHBOARD_STAFF_TAG],
+    summary="Dashboard staff list/create",
+    description="Xodim sahifasi uchun dashboard staff/admin userlar ro'yxatini qaytaradi yoki yangi xodim yaratadi.",
+)
 class DashboardStaffListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardStaffSerializer
 
@@ -736,7 +905,11 @@ class DashboardStaffListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, g
         return queryset.order_by("username")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Dashboard staff detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_STAFF_TAG],
+    summary="Dashboard staff detail/update/delete",
+    description="Xodim detail/edit modal uchun staff user profilini ko'rish, yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardStaffDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardStaffSerializer
 
@@ -744,7 +917,11 @@ class DashboardStaffDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, gener
         return get_user_model().objects.filter(is_staff=True).select_related("dashboard_profile")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Map master markers")
+@extend_schema(
+    tags=[DASHBOARD_MAPS_TAG],
+    summary="Map master markers",
+    description="Xaritalar sahifasi uchun lokatsiyasi bor ustalarni marker ma'lumotlari bilan qaytaradi.",
+)
 class DashboardMapMastersAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -780,7 +957,11 @@ class DashboardMapMastersAPIView(DashboardPermissionMixin, generics.GenericAPIVi
         return success_response({"count": len(data), "results": data})
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Client stats summary")
+@extend_schema(
+    tags=[DASHBOARD_CLIENTS_TAG],
+    summary="Client stats summary",
+    description="Mijoz detail sahifasi uchun orderlar soni, sarflangan summa, address/device/market statistikalarini qaytaradi.",
+)
 class DashboardClientStatsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -803,7 +984,11 @@ class DashboardClientStatsAPIView(DashboardPermissionMixin, generics.GenericAPIV
         return success_response(data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Order assistant list/create")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Order assistant list/create",
+    description="Shogird biriktirish modalida orderga assistant master biriktirish yoki mavjud assistantlarni ko'rish uchun ishlatiladi.",
+)
 class DashboardOrderAssistantListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardOrderAssistantSerializer
 
@@ -817,7 +1002,11 @@ class DashboardOrderAssistantListCreateAPIView(DashboardPermissionMixin, Envelop
         serializer.save(order=order, assigned_by=self.request.user)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Order assistant detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_ORDERS_TAG],
+    summary="Order assistant detail/update/delete",
+    description="Orderga biriktirilgan assistant master yozuvini ko'rish, yangilash yoki olib tashlash uchun ishlatiladi.",
+)
 class DashboardOrderAssistantDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardOrderAssistantSerializer
     lookup_url_kwarg = "assistant_pk"
@@ -826,7 +1015,11 @@ class DashboardOrderAssistantDetailAPIView(DashboardPermissionMixin, EnvelopeMix
         return DashboardOrderAssistant.objects.filter(order_id=self.kwargs["pk"]).select_related("assistant", "assigned_by")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Service price list/create")
+@extend_schema(
+    tags=[DASHBOARD_SERVICES_TAG],
+    summary="Service price list/create",
+    description="Tanlangan service uchun narx variantlari ro'yxatini qaytaradi yoki yangi narx qo'shadi.",
+)
 class DashboardServicePriceListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardServicePriceSerializer
 
@@ -840,13 +1033,21 @@ class DashboardServicePriceListCreateAPIView(DashboardPermissionMixin, EnvelopeM
         serializer.save(service=service)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Service price detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_SERVICES_TAG],
+    summary="Service price detail/update/delete",
+    description="Service narx variantini ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardServicePriceDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardServicePriceSerializer
     queryset = ServicePrice.objects.select_related("service").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Tariff feature list/create")
+@extend_schema(
+    tags=[DASHBOARD_TARIFFS_TAG],
+    summary="Tariff feature list/create",
+    description="Tanlangan tarifga tegishli afzalliklar/features ro'yxatini qaytaradi yoki yangi feature qo'shadi.",
+)
 class DashboardTariffFeatureListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardTariffFeatureSerializer
 
@@ -860,13 +1061,21 @@ class DashboardTariffFeatureListCreateAPIView(DashboardPermissionMixin, Envelope
         serializer.save(tariff=tariff)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Tariff feature detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_TARIFFS_TAG],
+    summary="Tariff feature detail/update/delete",
+    description="Tarif feature yozuvini ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardTariffFeatureDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardTariffFeatureSerializer
     queryset = TariffFeature.objects.select_related("tariff").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace categories list/create")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace kategoriyalari",
+    description="Marketplace sahifasidagi kategoriya filterlari uchun kategoriyalar ro'yxatini qaytaradi yoki yangi kategoriya yaratadi.",
+)
 class DashboardMarketCategoryListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMarketCategorySerializer
 
@@ -878,13 +1087,21 @@ class DashboardMarketCategoryListCreateAPIView(DashboardPermissionMixin, Envelop
         return queryset.order_by("name")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace category detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace kategoriya detail",
+    description="Marketplace kategoriya detail/edit modalida kategoriyani ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardMarketCategoryDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardMarketCategorySerializer
     queryset = MarketCategory.objects.all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace products list/create")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace mahsulotlari",
+    description="Marketplace mahsulotlari sahifasi uchun product ro'yxatini search/filter bilan qaytaradi yoki dashboarddan yangi product yaratadi.",
+)
 class DashboardMarketProductListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMarketProductSerializer
 
@@ -910,13 +1127,21 @@ class DashboardMarketProductListCreateAPIView(DashboardPermissionMixin, Envelope
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace product detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace mahsulot detail",
+    description="Marketplace mahsulot detail/edit oynasi uchun mahsulotni ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardMarketProductDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardMarketProductSerializer
     queryset = MarketProduct.objects.select_related("category", "seller").prefetch_related("images").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace product image list/create")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace mahsulot rasmlari",
+    description="Tanlangan marketplace mahsulotiga rasm qo'shish yoki mavjud rasmlar ro'yxatini ko'rsatish uchun ishlatiladi.",
+)
 class DashboardMarketProductImageListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMarketProductImageSerializer
 
@@ -930,13 +1155,21 @@ class DashboardMarketProductImageListCreateAPIView(DashboardPermissionMixin, Env
         serializer.save(product=product)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace product image detail/delete")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace mahsulot rasmi detail",
+    description="Marketplace mahsulotining bitta rasmini ko'rish yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardMarketProductImageDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveDestroyAPIView):
     serializer_class = DashboardMarketProductImageSerializer
     queryset = MarketProductImage.objects.select_related("product").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace orders list/create")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace buyurtmalari",
+    description="Marketplace orderlar jadvali uchun buyurtmalar ro'yxatini status/client/product bo'yicha filterlab qaytaradi yoki yangi market order yaratadi.",
+)
 class DashboardMarketOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMarketOrderSerializer
 
@@ -954,13 +1187,21 @@ class DashboardMarketOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMi
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Marketplace order detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_MARKET_TAG],
+    summary="Marketplace buyurtma detail",
+    description="Marketplace buyurtma detail/edit oynasi uchun market orderni ko'rish, yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardMarketOrderDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardMarketOrderSerializer
     queryset = MarketOrder.objects.select_related("client", "product", "product__category", "product__seller").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Warehouse stats")
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Ombor statistikasi",
+    description="Ombor sahifasidagi cardlar uchun mahsulotlar, low stock, jami qoldiq va kirim/chiqim statistikalarini qaytaradi.",
+)
 class DashboardWarehouseStatsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -978,7 +1219,11 @@ class DashboardWarehouseStatsAPIView(DashboardPermissionMixin, generics.GenericA
         return success_response(data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Warehouse products list/create")
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Ombor mahsulotlari",
+    description="Ombor mahsulotlari jadvali uchun product ro'yxatini search/active/low_stock filterlari bilan qaytaradi yoki yangi ombor mahsuloti yaratadi.",
+)
 class DashboardWarehouseProductListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardWarehouseProductSerializer
 
@@ -996,13 +1241,21 @@ class DashboardWarehouseProductListCreateAPIView(DashboardPermissionMixin, Envel
         return queryset
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Warehouse product detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Ombor mahsulot detail",
+    description="Ombor mahsulot detail/edit modalida mahsulotni ko'rish, yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardWarehouseProductDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardWarehouseProductSerializer
     queryset = WarehouseProduct.objects.all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Stock movements list/create")
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Ombor kirim-chiqimlari",
+    description="Ombor harakatlari jadvali uchun mahsulot kirim/chiqim tarixini qaytaradi yoki yangi stock movement yaratadi.",
+)
 class DashboardStockMovementListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardStockMovementSerializer
 
@@ -1017,13 +1270,21 @@ class DashboardStockMovementListCreateAPIView(DashboardPermissionMixin, Envelope
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Stock movement detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Ombor harakati detail",
+    description="Bitta ombor kirim/chiqim yozuvini ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardStockMovementDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardStockMovementSerializer
     queryset = StockMovement.objects.select_related("product", "master").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Master inventory list/create")
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Usta inventari",
+    description="Ombordan ustalarga biriktirilgan inventarlar ro'yxatini qaytaradi yoki ustaga yangi mahsulot biriktiradi.",
+)
 class DashboardMasterInventoryListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMasterInventorySerializer
 
@@ -1041,13 +1302,21 @@ class DashboardMasterInventoryListCreateAPIView(DashboardPermissionMixin, Envelo
         return queryset
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Master inventory detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Usta inventari detail",
+    description="Ustaga biriktirilgan bitta inventar yozuvini ko'rish, yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardMasterInventoryDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardMasterInventorySerializer
     queryset = MasterInventory.objects.select_related("master", "warehouse_product").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Live streams list/create")
+@extend_schema(
+    tags=[DASHBOARD_LIVE_TAG],
+    summary="Jonli kuzatuv streamlari",
+    description="Jonli kuzatuv sahifasi uchun usta/client/order bo'yicha streamlar ro'yxatini qaytaradi yoki yangi stream yozuvi yaratadi.",
+)
 class DashboardLiveStreamListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardLiveStreamSerializer
 
@@ -1062,13 +1331,21 @@ class DashboardLiveStreamListCreateAPIView(DashboardPermissionMixin, EnvelopeMix
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Live stream detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_LIVE_TAG],
+    summary="Jonli kuzatuv detail",
+    description="Bitta live stream yozuvini ko'rish, status yoki linklarini yangilash, yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardLiveStreamDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardLiveStreamSerializer
     queryset = DashboardLiveStream.objects.select_related("master", "client", "order", "order__service").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Archived videos")
+@extend_schema(
+    tags=[DASHBOARD_LIVE_TAG],
+    summary="Arxiv videolar",
+    description="Jonli kuzatuv sahifasidagi arxiv blok uchun tugagan yoki arxivlangan stream yozuvlarini qaytaradi.",
+)
 class DashboardArchivedVideoListAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
     serializer_class = DashboardLiveStreamSerializer
 
@@ -1078,7 +1355,11 @@ class DashboardArchivedVideoListAPIView(DashboardPermissionMixin, EnvelopeMixin,
         )
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Support chat inbox")
+@extend_schema(
+    tags=[DASHBOARD_SUPPORT_TAG],
+    summary="Support chat inbox",
+    description="Xabarlar sahifasi uchun client/master kesimida support threadlar, oxirgi xabar va unread count ro'yxatini qaytaradi.",
+)
 class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -1108,7 +1389,11 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
         return success_response({"count": len(threads), "results": threads})
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Support messages list/create")
+@extend_schema(
+    tags=[DASHBOARD_SUPPORT_TAG],
+    summary="Support xabarlari",
+    description="Tanlangan support thread xabarlarini qaytaradi yoki dashboard admin nomidan yangi support xabar yuboradi.",
+)
 class DashboardSupportMessageListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardSupportMessageSerializer
 
@@ -1129,13 +1414,21 @@ class DashboardSupportMessageListCreateAPIView(DashboardPermissionMixin, Envelop
         serializer.save(sender_role="admin")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Support message detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_SUPPORT_TAG],
+    summary="Support xabar detail",
+    description="Bitta support xabarini ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardSupportMessageDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardSupportMessageSerializer
     queryset = SupportMessage.objects.select_related("client", "master").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Mark support message read")
+@extend_schema(
+    tags=[DASHBOARD_SUPPORT_TAG],
+    summary="Support xabarni o'qilgan qilish",
+    description="Support inboxdagi bitta xabarni o'qilgan holatga o'tkazadi.",
+)
 class DashboardSupportMessageReadAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -1146,7 +1439,11 @@ class DashboardSupportMessageReadAPIView(DashboardPermissionMixin, generics.Gene
         return success_response(DashboardSupportMessageSerializer(message, context={"request": request}).data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Master wallet detail")
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Usta hamyoni",
+    description="Usta detail yoki moliya sahifasi uchun tanlangan ustaning wallet balans va umumiy hamyon ma'lumotlarini qaytaradi.",
+)
 class DashboardMasterWalletAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -1156,7 +1453,11 @@ class DashboardMasterWalletAPIView(DashboardPermissionMixin, generics.GenericAPI
         return success_response(DashboardMasterWalletSerializer(wallet, context={"request": request}).data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Wallet transactions list/create")
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Wallet tranzaksiyalari",
+    description="Usta wallet tranzaksiyalari jadvali uchun transaction ro'yxatini qaytaradi yoki yangi wallet transaction yaratadi.",
+)
 class DashboardWalletTransactionListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardWalletTransactionSerializer
 
@@ -1171,13 +1472,21 @@ class DashboardWalletTransactionListCreateAPIView(DashboardPermissionMixin, Enve
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Wallet transaction detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Wallet tranzaksiya detail",
+    description="Bitta wallet transaction yozuvini ko'rish, yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardWalletTransactionDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardWalletTransactionSerializer
     queryset = WalletTransaction.objects.select_related("master", "order").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Withdraw requests list/create")
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Pul yechish so'rovlari",
+    description="Moliya sahifasida ustalarning pul yechish so'rovlarini status/master filterlari bilan qaytaradi yoki yangi so'rov yaratadi.",
+)
 class DashboardWithdrawRequestListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardWithdrawRequestSerializer
 
@@ -1192,13 +1501,21 @@ class DashboardWithdrawRequestListCreateAPIView(DashboardPermissionMixin, Envelo
         return queryset.order_by("-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Withdraw request detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Pul yechish so'rovi detail",
+    description="Bitta withdraw requestni ko'rish, statusini yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardWithdrawRequestDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardWithdrawRequestSerializer
     queryset = WithdrawRequest.objects.select_related("master").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Company expenses list/create")
+@extend_schema(
+    tags=[DASHBOARD_EXPENSES_TAG],
+    summary="Kompaniya xarajatlari",
+    description="Xarajatlar sahifasidagi kompaniya xarajatlari ro'yxatini date filterlar bilan qaytaradi yoki yangi xarajat yaratadi.",
+)
 class DashboardCompanyExpenseListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardCompanyExpenseSerializer
 
@@ -1213,13 +1530,21 @@ class DashboardCompanyExpenseListCreateAPIView(DashboardPermissionMixin, Envelop
         return queryset.order_by("-date", "-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Company expense detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_EXPENSES_TAG],
+    summary="Kompaniya xarajati detail",
+    description="Bitta kompaniya xarajatini ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardCompanyExpenseDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardCompanyExpenseSerializer
     queryset = DashboardCompanyExpense.objects.all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Warehouse expenses list/create")
+@extend_schema(
+    tags=[DASHBOARD_EXPENSES_TAG],
+    summary="Ombor xarajatlari",
+    description="Xarajatlar sahifasidagi ombor xarajatlarini product/date filterlar bilan qaytaradi yoki yangi ombor xarajati yaratadi.",
+)
 class DashboardWarehouseExpenseListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardWarehouseExpenseSerializer
 
@@ -1237,13 +1562,21 @@ class DashboardWarehouseExpenseListCreateAPIView(DashboardPermissionMixin, Envel
         return queryset.order_by("-date", "-created_at")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Warehouse expense detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_EXPENSES_TAG],
+    summary="Ombor xarajati detail",
+    description="Bitta ombor xarajatini ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardWarehouseExpenseDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardWarehouseExpenseSerializer
     queryset = DashboardWarehouseExpense.objects.select_related("product").all()
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Finance summary")
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Moliya summary",
+    description="Moliya hisobotlari sahifasidagi summary cardlar uchun yil bo'yicha daromad, xarajat, foyda va pending withdraw countni qaytaradi.",
+)
 class DashboardFinanceSummaryAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -1267,7 +1600,11 @@ class DashboardFinanceSummaryAPIView(DashboardPermissionMixin, generics.GenericA
         return success_response(data)
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Finance report table")
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Moliya hisobot jadvali",
+    description="Moliya hisobotlari sahifasi uchun summary va oyma-oy income/expense chart ma'lumotlarini qaytaradi.",
+)
 class DashboardFinanceReportAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
@@ -1278,7 +1615,11 @@ class DashboardFinanceReportAPIView(DashboardPermissionMixin, generics.GenericAP
         return success_response({"summary": summary, "chart": data})
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Integration settings list/create")
+@extend_schema(
+    tags=[DASHBOARD_SETTINGS_TAG],
+    summary="Integratsiya sozlamalari",
+    description="Sozlamalar sahifasidagi integratsiya kalitlari va konfiguratsiyalarini qaytaradi yoki yangi integration setting yaratadi.",
+)
 class DashboardIntegrationSettingListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardIntegrationSettingSerializer
 
@@ -1290,7 +1631,11 @@ class DashboardIntegrationSettingListCreateAPIView(DashboardPermissionMixin, Env
         return queryset.order_by("key")
 
 
-@extend_schema(tags=[DASHBOARD_TAG], summary="Integration setting detail/update/delete")
+@extend_schema(
+    tags=[DASHBOARD_SETTINGS_TAG],
+    summary="Integratsiya sozlamasi detail",
+    description="Bitta integration settingni ko'rish, qiymatini yangilash yoki o'chirish uchun ishlatiladi.",
+)
 class DashboardIntegrationSettingDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardIntegrationSettingSerializer
     queryset = DashboardIntegrationSetting.objects.all()
