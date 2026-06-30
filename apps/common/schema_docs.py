@@ -5,11 +5,12 @@ HomeX API frontend va mobile integratsiya uchun tuzilgan. Barcha endpointlar `/a
 
 1. Client login: `POST /client/auth/send-otp/` -> `POST /client/auth/verify-otp/`.
 2. Master login: `POST /master/auth/login/`.
-3. Protected endpointlarda `Authorize` tugmasiga faqat access tokenni yozing. Swagger o'zi `Bearer` qo'shadi.
-4. REST requestlarda header: `Authorization: Bearer <access_token>`.
-5. Access token muddati: 3 kun. Refresh token muddati: 15 kun.
-6. Refresh endpointlar yangi `access_token` va yangi `refresh_token` qaytaradi.
-7. WebSocketlarda token URL query orqali yuborilmaydi. Faqat header: `Authorization: Bearer <access_token>`.
+3. Dashboard admin login: `POST /dashboard/auth/login/`.
+4. Protected endpointlarda `Authorize` tugmasiga faqat access tokenni yozing. Swagger o'zi `Bearer` qo'shadi.
+5. REST requestlarda header: `Authorization: Bearer <access_token>`.
+6. Access token muddati: 3 kun. Refresh token muddati: 15 kun.
+7. Refresh endpointlar yangi `access_token` va yangi `refresh_token` qaytaradi.
+8. WebSocketlarda token URL query orqali yuborilmaydi. Faqat header: `Authorization: Bearer <access_token>`.
 
 ## Standart response formatlari
 
@@ -66,7 +67,7 @@ Error response:
 |---|---|---|
 | Client | `role=client` | `/client/...` |
 | Master | `role=master` | `/master/...` |
-| Admin | Django staff/admin | `/warehouse/...`, `/masters/{id}/inventory/...` |
+| Dashboard/Admin | `role=admin` yoki Django staff/admin session | `/dashboard/...`, `/warehouse/...`, `/masters/{id}/inventory/...` |
 
 ## Order statuslari
 
@@ -121,6 +122,7 @@ Browser `new WebSocket()` custom `Authorization` header yubora olmaydi. Web fron
 
 
 OPENAPI_TAGS = [
+    {"name": "Dashboard", "description": "Staff/admin dashboard API: auth, overview, stats, clients, masters, orders, services, tariffs, notifications, expenses."},
     {"name": "Client Auth", "description": "Client OTP login, profile completion, refresh/logout/delete account."},
     {"name": "Client Home", "description": "Client asosiy sahifa: service categories, active orders, map config, quick actions."},
     {"name": "Client Services", "description": "Service category va category bo'yicha price list."},
