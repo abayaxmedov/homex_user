@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, time
 from io import BytesIO
 from zipfile import ZipFile
@@ -12,10 +13,10 @@ from apps.accounts.tokens import issue_role_tokens
 from apps.accounts.ws_auth import RoleJWTAuthMiddleware
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification, notification_group
-from apps.orders.models import Order, OrderStatus, OrderTracking
+from apps.orders.models import HomeBanner, Order, OrderStatus, OrderTracking
 from apps.support.consumers import serialize_history, ws_json_dumps
 from apps.support.models import SupportMessage
-from apps.support.services import create_support_message, get_or_create_support_chat, support_group
+from apps.support.services import broadcast_support_message, create_support_message, get_or_create_support_chat, support_group
 
 
 def make_order(client_user, service, **kwargs):
@@ -229,6 +230,21 @@ def test_support_websocket_history_payload_is_json_safe(client_user):
     assert json.loads(ws_encoded)["chat_id"] == str(chat.id)
 
 
+def test_support_broadcast_failure_is_logged(client_user, monkeypatch, caplog):
+    class BrokenChannelLayer:
+        async def group_send(self, *args, **kwargs):
+            raise RuntimeError("channel layer down")
+
+    chat = get_or_create_support_chat(client_user)
+    message = create_support_message(chat=chat, sender=client_user, content="Log test")
+    monkeypatch.setattr("apps.support.services.get_channel_layer", lambda: BrokenChannelLayer())
+
+    with caplog.at_level(logging.ERROR, logger="apps.support.services"):
+        broadcast_support_message(message)
+
+    assert "Failed to broadcast support message" in caplog.text
+
+
 def test_client_home_and_map_config_are_frontend_ready(client_api):
     home_response = client_api.get(reverse("client-home"))
     map_response = client_api.get(reverse("client-map-config"))
@@ -236,10 +252,22 @@ def test_client_home_and_map_config_are_frontend_ready(client_api):
     assert home_response.status_code == 200
     assert "websocket" in home_response.data["data"]
     assert "quick_actions" in home_response.data["data"]
-    assert set(home_response.data["data"]["banners"][0]) == {"id", "banner_url", "is_active"}
+    assert set(home_response.data["data"]["banners"][0]) == {"id", "banner_image", "banner_url", "is_active"}
     assert map_response.status_code == 200
     assert map_response.data["data"]["tracking_ws_template"] == "/ws/client/track/{order_id}/"
     assert map_response.data["data"]["auth_header"] == "Authorization: Bearer {access_token}"
+
+
+def test_client_home_banner_image_is_exposed_in_api(client_api):
+    HomeBanner.objects.update(is_active=False)
+    HomeBanner.objects.create(banner_image="home/banners/mobile-banner.jpg")
+
+    response = client_api.get(reverse("client-home"))
+
+    banner = response.data["data"]["banners"][0]
+    assert response.status_code == 200
+    assert banner["banner_image"].endswith("/media/home/banners/mobile-banner.jpg")
+    assert banner["banner_url"] == banner["banner_image"]
 
 
 def test_websocket_auth_reads_authorization_header_not_query(master):

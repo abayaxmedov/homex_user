@@ -1,8 +1,14 @@
+import logging
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
 from apps.support.models import SupportChat, SupportMessage
+
+
+logger = logging.getLogger(__name__)
 
 
 def support_group(role, user_id):
@@ -46,6 +52,22 @@ def user_can_access_chat(user, chat):
     if role == "client":
         return chat.participant_role == "client" and chat.client_id == user.id
     return False
+
+
+def with_latest_support_message(queryset):
+    latest_message = SupportMessage.objects.filter(chat_id=OuterRef("pk")).order_by("-created_at", "-id")
+    return queryset.annotate(
+        last_message_id=Subquery(latest_message.values("id")[:1]),
+        last_message_created_at=Subquery(latest_message.values("created_at")[:1]),
+    )
+
+
+def attach_latest_support_messages(chats):
+    message_ids = [chat.last_message_id for chat in chats if getattr(chat, "last_message_id", None)]
+    messages_by_id = SupportMessage.objects.select_related("client", "master", "admin").in_bulk(message_ids)
+    for chat in chats:
+        chat._last_message = messages_by_id.get(getattr(chat, "last_message_id", None))
+    return chats
 
 
 def touch_chat(chat, increment_unread=False):
@@ -106,6 +128,7 @@ def support_chat_payload(chat):
 def broadcast_admin_update(chat):
     channel_layer = get_channel_layer()
     if not channel_layer:
+        logger.warning("Support admin update skipped: channel layer is unavailable for chat_id=%s", chat.id)
         return
     try:
         async_to_sync(channel_layer.group_send)(
@@ -119,18 +142,22 @@ def broadcast_admin_update(chat):
             },
         )
     except Exception:
+        logger.exception("Failed to broadcast support admin update for chat_id=%s", chat.id)
         return
 
 
 def broadcast_support_message(message):
     channel_layer = get_channel_layer()
     if not channel_layer:
+        logger.warning("Support message broadcast skipped: channel layer is unavailable for message_id=%s", message.id)
         return
     chat = message.chat
     if not chat:
+        logger.warning("Support message broadcast skipped: message_id=%s has no chat", message.id)
         return
     group = chat_group(chat)
     if not group:
+        logger.warning("Support message broadcast skipped: chat_id=%s has no participant group", chat.id)
         return
     payload = support_payload(message)
     try:
@@ -139,5 +166,11 @@ def broadcast_support_message(message):
             {"type": "chat.message", "message": payload, "payload": payload},
         )
     except Exception:
+        logger.exception(
+            "Failed to broadcast support message message_id=%s chat_id=%s group=%s",
+            message.id,
+            chat.id,
+            group,
+        )
         return
     broadcast_admin_update(chat)

@@ -23,19 +23,27 @@ class PaymentType(models.TextChoices):
 
 class HomeBanner(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    banner_image = models.ImageField(upload_to="home/banners/", null=True, blank=True)
     banner_url = models.URLField(max_length=500, blank=True)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        return self.banner_url or str(self.id)
+        return self.banner_url or (self.banner_image.name if self.banner_image else str(self.id))
 
     def as_home_payload(self, request=None):
+        banner_image = self.banner_image.url if self.banner_image else None
+        if banner_image and request is not None:
+            banner_image = request.build_absolute_uri(banner_image)
+
         banner_url = self.banner_url or None
         if banner_url and banner_url.startswith("/") and request is not None:
             banner_url = request.build_absolute_uri(banner_url)
+        if not banner_url:
+            banner_url = banner_image
 
         return {
             "id": str(self.id),
+            "banner_image": banner_image,
             "banner_url": banner_url,
             "is_active": self.is_active,
         }

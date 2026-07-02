@@ -1,3 +1,5 @@
+import logging
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
@@ -5,6 +7,9 @@ from apps.accounts.models import FCMDevice
 from apps.integrations.adapters import PushClient
 from apps.notifications.models import Notification
 from apps.notifications.serializers import NotificationSerializer
+
+
+logger = logging.getLogger(__name__)
 
 
 def notification_group(role, user_id):
@@ -18,9 +23,14 @@ def notification_payload(notification):
 def broadcast_notification(notification, event_type="notification.created"):
     channel_layer = get_channel_layer()
     if not channel_layer:
+        logger.warning(
+            "Notification broadcast skipped: channel layer is unavailable for notification_id=%s",
+            notification.id,
+        )
         return
     user_id = notification.master_id if notification.role == "master" else notification.client_id
     if not user_id:
+        logger.warning("Notification broadcast skipped: notification_id=%s has no target user", notification.id)
         return
     try:
         async_to_sync(channel_layer.group_send)(
@@ -32,12 +42,24 @@ def broadcast_notification(notification, event_type="notification.created"):
             },
         )
     except Exception:
+        logger.exception(
+            "Failed to broadcast notification notification_id=%s event_type=%s role=%s user_id=%s",
+            notification.id,
+            event_type,
+            notification.role,
+            user_id,
+        )
         return
 
 
 def broadcast_notification_read_all(role, user_id):
     channel_layer = get_channel_layer()
     if not channel_layer:
+        logger.warning(
+            "Notification read-all broadcast skipped: channel layer is unavailable role=%s user_id=%s",
+            role,
+            user_id,
+        )
         return
     try:
         async_to_sync(channel_layer.group_send)(
@@ -49,6 +71,7 @@ def broadcast_notification_read_all(role, user_id):
             },
         )
     except Exception:
+        logger.exception("Failed to broadcast notification read-all role=%s user_id=%s", role, user_id)
         return
 
 
@@ -80,6 +103,12 @@ def send_push_notification(notification):
     try:
         return PushClient().send_many(tokens, notification.title, notification.body, data=push_payload(notification))
     except Exception:
+        logger.exception(
+            "Failed to send push notification notification_id=%s role=%s token_count=%s",
+            notification.id,
+            notification.role,
+            len(tokens),
+        )
         return None
 
 

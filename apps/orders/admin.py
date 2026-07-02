@@ -6,11 +6,11 @@ from apps.orders.models import HomeBanner, Order, OrderInventoryUsage, OrderTrac
 
 @admin.register(HomeBanner)
 class HomeBannerAdmin(HomeXModelAdmin):
-    list_display = ("id", "banner_url", "is_active")
+    list_display = ("id", "banner_image", "banner_url", "is_active")
     list_editable = ("is_active",)
     search_fields = ("banner_url",)
     list_filter = ("is_active",)
-    fields = ("banner_url", "is_active")
+    fields = ("banner_image", "banner_url", "is_active")
 
 
 class OrderInventoryUsageInline(HomeXTabularInline):

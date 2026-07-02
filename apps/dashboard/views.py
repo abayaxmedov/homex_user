@@ -27,7 +27,8 @@ from apps.notifications.services import broadcast_notification, send_push_notifi
 from apps.orders.models import Order, OrderStatus
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
-from apps.support.models import SupportMessage
+from apps.support.models import SupportChat, SupportMessage
+from apps.support.services import attach_latest_support_messages, with_latest_support_message
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
 from .serializers import (
@@ -1370,26 +1371,28 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
     serializer_class = EmptySerializer
 
     def get(self, request):
-        rows = (
-            SupportMessage.objects.values("client_id", "master_id")
-            .annotate(last_message_at=Max("created_at"), unread_count=Count("id", filter=Q(is_read=False)))
-            .order_by("-last_message_at")
-        )
-        threads = []
-        for row in rows:
-            last_message = (
-                SupportMessage.objects.filter(client_id=row["client_id"], master_id=row["master_id"])
-                .select_related("client", "master")
-                .order_by("-created_at")
-                .first()
+        chats = list(
+            with_latest_support_message(
+                SupportChat.objects.select_related("client", "master").annotate(
+                    unread_count=Count("messages", filter=Q(messages__is_read=False))
+                )
             )
+            .filter(last_message_id__isnull=False)
+            .order_by("-last_message_created_at")
+        )
+        attach_latest_support_messages(chats)
+        threads = []
+        for chat in chats:
+            last_message = getattr(chat, "_last_message", None)
+            if not last_message:
+                continue
             threads.append(
                 {
-                    "client": DashboardClientMiniSerializer(last_message.client).data if last_message.client else None,
-                    "master": DashboardMasterMiniSerializer(last_message.master).data if last_message.master else None,
+                    "client": DashboardClientMiniSerializer(chat.client).data if chat.client else None,
+                    "master": DashboardMasterMiniSerializer(chat.master).data if chat.master else None,
                     "last_message": DashboardSupportMessageSerializer(last_message, context={"request": request}).data,
-                    "last_message_at": row["last_message_at"],
-                    "unread_count": row["unread_count"],
+                    "last_message_at": last_message.created_at,
+                    "unread_count": chat.unread_count,
                 }
             )
         return success_response({"count": len(threads), "results": threads})

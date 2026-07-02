@@ -17,6 +17,7 @@ def env_bool(name, default=False):
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-dev-secret")
 DEBUG = env_bool("DJANGO_DEBUG", True)
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
+LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO")
 
 INSTALLED_APPS = [
     "unfold",
@@ -150,6 +151,33 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardPageNumberPagination",
     "EXCEPTION_HANDLER": "apps.common.exceptions.homex_exception_handler",
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": LOG_LEVEL,
+    },
+    "loggers": {
+        "django.server": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+    },
 }
 
 SPECTACULAR_SETTINGS = {
