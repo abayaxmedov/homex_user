@@ -16,7 +16,7 @@ from apps.services.serializers import ServiceCategorySerializer, ServiceSerializ
 
 
 def public_home_banners(request):
-    banners = [banner.as_home_payload(request) for banner in HomeBanner.objects.filter(is_active=True)]
+    banners = [banner.as_home_payload(request) for banner in HomeBanner.objects.filter(is_active=True).order_by("id")]
     return banners or DEFAULT_HOME_BANNERS
 
 

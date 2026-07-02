@@ -1,4 +1,10 @@
+from django.http import JsonResponse
+
 from apps.common.responses import success_response
+
+
+def health_check(request):
+    return JsonResponse({"status": "ok"})
 
 
 class EnvelopeMixin:

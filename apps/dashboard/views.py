@@ -23,6 +23,7 @@ from apps.dashboard.models import (
 )
 from apps.market.models import MarketCategory, MarketOrder, MarketProduct, MarketProductImage
 from apps.notifications.models import Notification
+from apps.notifications.services import broadcast_notification, send_push_notification
 from apps.orders.models import Order, OrderStatus
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
@@ -792,6 +793,11 @@ class DashboardNotificationListCreateAPIView(DashboardPermissionMixin, EnvelopeM
         if is_read is not None:
             queryset = queryset.filter(is_read=is_read)
         return queryset.order_by("-created_at")
+
+    def perform_create(self, serializer):
+        notification = serializer.save()
+        broadcast_notification(notification)
+        send_push_notification(notification)
 
 
 @extend_schema(

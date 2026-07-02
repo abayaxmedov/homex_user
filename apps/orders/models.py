@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 from apps.common.models import TimeStampedUUIDModel
@@ -19,41 +21,21 @@ class PaymentType(models.TextChoices):
     PLASTIC = "plastic", "Plastik"
 
 
-class HomeBanner(TimeStampedUUIDModel):
-    key = models.SlugField(max_length=80, unique=True)
-    badge_text = models.CharField(max_length=120, blank=True)
-    title = models.CharField(max_length=180)
-    discount_percent = models.PositiveSmallIntegerField(null=True, blank=True)
-    cta_label = models.CharField(max_length=80, blank=True)
-    cta_action = models.CharField(max_length=80, blank=True)
-    target_type = models.CharField(max_length=50, default="services")
-    target_value = models.CharField(max_length=160, blank=True)
-    banner_image = models.ImageField(upload_to="home/banners/", null=True, blank=True)
-    external_banner_url = models.URLField(blank=True)
-    sort_order = models.PositiveIntegerField(default=0)
+class HomeBanner(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    banner_url = models.URLField(max_length=500, blank=True)
     is_active = models.BooleanField(default=True)
 
-    class Meta:
-        ordering = ("sort_order", "-created_at")
-
     def __str__(self):
-        return self.title
+        return self.banner_url or str(self.id)
 
     def as_home_payload(self, request=None):
-        banner_url = self.external_banner_url or None
-        if self.banner_image:
-            banner_url = self.banner_image.url
-            if request is not None:
-                banner_url = request.build_absolute_uri(banner_url)
+        banner_url = self.banner_url or None
+        if banner_url and banner_url.startswith("/") and request is not None:
+            banner_url = request.build_absolute_uri(banner_url)
 
         return {
-            "id": self.key,
-            "badge_text": self.badge_text,
-            "title": self.title,
-            "discount_percent": self.discount_percent,
-            "cta_label": self.cta_label,
-            "cta_action": self.cta_action,
-            "target": {"type": self.target_type, "value": self.target_value or None},
+            "id": str(self.id),
             "banner_url": banner_url,
             "is_active": self.is_active,
         }

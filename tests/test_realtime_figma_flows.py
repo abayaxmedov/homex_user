@@ -1,3 +1,4 @@
+import json
 from datetime import date, time
 from io import BytesIO
 from zipfile import ZipFile
@@ -12,8 +13,9 @@ from apps.accounts.ws_auth import RoleJWTAuthMiddleware
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification, notification_group
 from apps.orders.models import Order, OrderStatus, OrderTracking
+from apps.support.consumers import serialize_history, ws_json_dumps
 from apps.support.models import SupportMessage
-from apps.support.services import support_group
+from apps.support.services import create_support_message, get_or_create_support_chat, support_group
 
 
 def make_order(client_user, service, **kwargs):
@@ -208,8 +210,23 @@ def test_support_rest_broadcasts_realtime_event(client_api, client_user):
     event = async_to_sync(channel_layer.receive)(channel_name)
 
     assert response.status_code == 201
+    json.dumps(event["payload"])
     assert event["payload"]["message"] == "Yordam kerak"
     assert SupportMessage.objects.filter(client=client_user, message="Yordam kerak").exists()
+
+
+def test_support_websocket_history_payload_is_json_safe(client_user):
+    chat = get_or_create_support_chat(client_user)
+    create_support_message(chat=chat, sender=client_user, content="Oldingi xabar")
+
+    history = async_to_sync(serialize_history)(str(chat.id))
+    encoded = json.dumps({"type": "history", "messages": history, "chat_id": str(chat.id)})
+    ws_encoded = ws_json_dumps({"type": "history", "messages": history, "chat_id": chat.id})
+    decoded = json.loads(encoded)
+
+    assert decoded["messages"][0]["chat"] == str(chat.id)
+    assert decoded["messages"][0]["client"] == str(client_user.id)
+    assert json.loads(ws_encoded)["chat_id"] == str(chat.id)
 
 
 def test_client_home_and_map_config_are_frontend_ready(client_api):
@@ -219,11 +236,7 @@ def test_client_home_and_map_config_are_frontend_ready(client_api):
     assert home_response.status_code == 200
     assert "websocket" in home_response.data["data"]
     assert "quick_actions" in home_response.data["data"]
-    assert home_response.data["data"]["banners"][0]["title"] == "Uy xizmatlariga maxsus chegirma"
-    assert home_response.data["data"]["banners"][0]["cta_action"] == "create_order"
-    assert "banner_url" in home_response.data["data"]["banners"][0]
-    assert "image_url" not in home_response.data["data"]["banners"][0]
-    assert "background" not in home_response.data["data"]["banners"][0]
+    assert set(home_response.data["data"]["banners"][0]) == {"id", "banner_url", "is_active"}
     assert map_response.status_code == 200
     assert map_response.data["data"]["tracking_ws_template"] == "/ws/client/track/{order_id}/"
     assert map_response.data["data"]["auth_header"] == "Authorization: Bearer {access_token}"

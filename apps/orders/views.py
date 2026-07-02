@@ -87,13 +87,7 @@ TRACKING_RESPONSE_EXAMPLE = {
 
 DEFAULT_HOME_BANNERS = [
     {
-        "id": "home-services-discount",
-        "badge_text": "Bugun 25% chegirma",
-        "title": "Uy xizmatlariga maxsus chegirma",
-        "discount_percent": 25,
-        "cta_label": "Band qilish",
-        "cta_action": "create_order",
-        "target": {"type": "services", "value": None},
+        "id": "00000000-0000-0000-0000-000000000000",
         "banner_url": None,
         "is_active": True,
     }
@@ -101,7 +95,7 @@ DEFAULT_HOME_BANNERS = [
 
 
 def get_home_banners(request):
-    banners = [banner.as_home_payload(request) for banner in HomeBanner.objects.filter(is_active=True)]
+    banners = [banner.as_home_payload(request) for banner in HomeBanner.objects.filter(is_active=True).order_by("id")]
     return banners or DEFAULT_HOME_BANNERS
 
 

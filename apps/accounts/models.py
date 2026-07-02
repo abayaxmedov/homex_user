@@ -24,7 +24,7 @@ class Client(TimeStampedUUIDModel):
     language = models.CharField(max_length=5, choices=Language.choices, default=Language.UZ)
     notifications_enabled = models.BooleanField(default=True)
     push_enabled = models.BooleanField(default=True)
-    fcm_token = models.CharField(max_length=255, blank=True)
+    fcm_token = models.CharField(max_length=512, blank=True)
     current_tariff = models.ForeignKey(
         "profiles.Tariff", on_delete=models.SET_NULL, null=True, blank=True, related_name="clients"
     )
@@ -68,7 +68,7 @@ class Master(TimeStampedUUIDModel):
     language = models.CharField(max_length=5, choices=Language.choices, default=Language.UZ)
     notifications_enabled = models.BooleanField(default=True)
     push_enabled = models.BooleanField(default=True)
-    fcm_token = models.CharField(max_length=255, blank=True)
+    fcm_token = models.CharField(max_length=512, blank=True)
     is_active = models.BooleanField(default=True)
 
     @property
@@ -118,7 +118,7 @@ class FCMDevice(TimeStampedUUIDModel):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     client = models.ForeignKey(Client, on_delete=models.CASCADE, null=True, blank=True, related_name="devices")
     master = models.ForeignKey(Master, on_delete=models.CASCADE, null=True, blank=True, related_name="devices")
-    token = models.CharField(max_length=255, unique=True)
+    token = models.CharField(max_length=512, unique=True)
     platform = models.CharField(max_length=30, blank=True)
     is_active = models.BooleanField(default=True)
 

@@ -3,6 +3,11 @@ from rest_framework import serializers
 from apps.support.models import SupportChat, SupportMessage
 
 
+class StringPKField(serializers.Field):
+    def to_representation(self, value):
+        return str(value) if value is not None else None
+
+
 def _person_name(obj):
     if not obj:
         return ""
@@ -30,6 +35,9 @@ def _sender_payload(obj, role):
 
 
 class SupportChatSerializer(serializers.ModelSerializer):
+    id = StringPKField(read_only=True)
+    client = StringPKField(source="client_id", read_only=True)
+    master = StringPKField(source="master_id", read_only=True)
     participant = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
 
@@ -59,6 +67,11 @@ class SupportChatSerializer(serializers.ModelSerializer):
 
 
 class SupportMessageSerializer(serializers.ModelSerializer):
+    id = StringPKField(read_only=True)
+    chat = StringPKField(source="chat_id", read_only=True)
+    client = StringPKField(source="client_id", read_only=True)
+    master = StringPKField(source="master_id", read_only=True)
+    admin = StringPKField(source="admin_id", read_only=True)
     content = serializers.CharField(source="message", read_only=True)
     timestamp = serializers.DateTimeField(source="created_at", read_only=True)
     from_user = serializers.SerializerMethodField()

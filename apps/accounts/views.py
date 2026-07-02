@@ -539,18 +539,46 @@ class ClientNotificationSettingsView(generics.GenericAPIView):
 
 
 @extend_schema_view(post=extend_schema(tags=["Master Push"]))
-class MasterPushRegisterView(generics.CreateAPIView):
+class MasterPushRegisterView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = FCMDeviceSerializer
 
-    def perform_create(self, serializer):
-        serializer.save(role="master", master=self.request.user)
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        device, created = FCMDevice.objects.update_or_create(
+            token=serializer.validated_data["token"],
+            defaults={
+                "role": "master",
+                "master": request.user,
+                "client": None,
+                "platform": serializer.validated_data.get("platform", ""),
+                "is_active": True,
+            },
+        )
+        request.user.fcm_token = device.token
+        request.user.save(update_fields=["fcm_token"])
+        return success_response(FCMDeviceSerializer(device).data, status=201 if created else 200)
 
 
 @extend_schema_view(post=extend_schema(tags=["Client Push"]))
-class ClientPushRegisterView(generics.CreateAPIView):
+class ClientPushRegisterView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = FCMDeviceSerializer
 
-    def perform_create(self, serializer):
-        serializer.save(role="client", client=self.request.user)
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        device, created = FCMDevice.objects.update_or_create(
+            token=serializer.validated_data["token"],
+            defaults={
+                "role": "client",
+                "client": request.user,
+                "master": None,
+                "platform": serializer.validated_data.get("platform", ""),
+                "is_active": True,
+            },
+        )
+        request.user.fcm_token = device.token
+        request.user.save(update_fields=["fcm_token"])
+        return success_response(FCMDeviceSerializer(device).data, status=201 if created else 200)
