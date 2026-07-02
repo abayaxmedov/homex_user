@@ -24,6 +24,31 @@ if url.startswith("postgres"):
         raise SystemExit(1)
 PYEOF
 
+echo "==> Waiting for Redis..."
+python - <<'PYEOF'
+import os, socket, time, urllib.parse
+
+url = os.environ.get("REDIS_URL", "")
+if not url or url == "locmem":
+    print("Redis wait skipped")
+    raise SystemExit(0)
+
+p = urllib.parse.urlparse(url)
+host, port = p.hostname, p.port or 6379
+for attempt in range(30):
+    try:
+        s = socket.create_connection((host, port), timeout=2)
+        s.close()
+        print(f"Redis is ready at {host}:{port}")
+        break
+    except OSError:
+        print(f"  [{attempt + 1}/30] Waiting for {host}:{port}...")
+        time.sleep(2)
+else:
+    print("ERROR: Redis did not become available in time")
+    raise SystemExit(1)
+PYEOF
+
 echo "==> Running migrations..."
 python manage.py migrate --noinput
 

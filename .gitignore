@@ -150,6 +150,8 @@ activemq-data/
 # Environments
 .env
 .envrc
+firebase-service-account*.json
+serviceAccountKey.json
 .venv
 env/
 venv/

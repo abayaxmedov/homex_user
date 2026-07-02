@@ -1,7 +1,9 @@
 from django.urls import reverse
 
+from apps.accounts.models import FCMDevice
 from apps.market.models import MarketCategory, MarketFavorite, MarketOrder, MarketProduct
 from apps.notifications.models import Notification
+from apps.notifications.services import create_notification
 from apps.support.models import SupportChat, SupportMessage
 from apps.support.services import create_support_message, mark_chat_read_by_admin
 
@@ -130,6 +132,78 @@ def test_notifications_can_be_read_by_role(client_api, master_api, client_user, 
     master_notification.refresh_from_db()
     assert client_notification.is_read is True
     assert master_notification.is_read is True
+
+
+def test_client_push_register_is_idempotent(client_api, client_user):
+    first = client_api.post(
+        reverse("client-push-register"),
+        {"token": " client-fcm-token ", "platform": "ios"},
+        format="json",
+    )
+    second = client_api.post(
+        reverse("client-push-register"),
+        {"token": "client-fcm-token", "platform": "android"},
+        format="json",
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert FCMDevice.objects.count() == 1
+    device = FCMDevice.objects.get()
+    assert device.client == client_user
+    assert device.role == "client"
+    assert device.platform == "android"
+    assert device.is_active is True
+    client_user.refresh_from_db()
+    assert client_user.fcm_token == "client-fcm-token"
+
+
+def test_create_notification_sends_push_to_active_devices(monkeypatch, client_user):
+    sent = {}
+
+    class FakePushClient:
+        def send_many(self, tokens, title, body, data=None):
+            sent.update({"tokens": tokens, "title": title, "body": body, "data": data})
+
+    monkeypatch.setattr("apps.notifications.services.PushClient", lambda: FakePushClient())
+    FCMDevice.objects.create(role="client", client=client_user, token="active-token", platform="ios")
+    FCMDevice.objects.create(
+        role="client",
+        client=client_user,
+        token="inactive-token",
+        platform="android",
+        is_active=False,
+    )
+
+    notification = create_notification(
+        role="client",
+        client=client_user,
+        title="Buyurtma",
+        body="Qabul qilindi",
+        data={"order_id": "123"},
+    )
+
+    assert sent["tokens"] == ["active-token"]
+    assert sent["title"] == "Buyurtma"
+    assert sent["body"] == "Qabul qilindi"
+    assert sent["data"]["notification_id"] == str(notification.id)
+    assert sent["data"]["order_id"] == "123"
+
+
+def test_create_notification_respects_push_setting(monkeypatch, client_user):
+    client_user.push_enabled = False
+    client_user.save(update_fields=["push_enabled"])
+    FCMDevice.objects.create(role="client", client=client_user, token="active-token", platform="ios")
+    sent = []
+
+    class FakePushClient:
+        def send_many(self, tokens, title, body, data=None):
+            sent.append(tokens)
+
+    monkeypatch.setattr("apps.notifications.services.PushClient", lambda: FakePushClient())
+    create_notification(role="client", client=client_user, title="Buyurtma")
+
+    assert sent == []
 
 
 def test_support_messages_are_scoped_by_role(client_api, master_api, client_user, master):

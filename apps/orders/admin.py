@@ -6,25 +6,11 @@ from apps.orders.models import HomeBanner, Order, OrderInventoryUsage, OrderTrac
 
 @admin.register(HomeBanner)
 class HomeBannerAdmin(HomeXModelAdmin):
-    list_display = ("title", "key", "cta_action", "sort_order", "is_active", "updated_at")
-    list_editable = ("sort_order", "is_active")
-    search_fields = ("title", "key", "badge_text", "cta_label", "cta_action")
-    list_filter = ("is_active", "target_type")
-    prepopulated_fields = {"key": ("title",)}
-    fields = (
-        "key",
-        "badge_text",
-        "title",
-        "discount_percent",
-        "cta_label",
-        "cta_action",
-        "target_type",
-        "target_value",
-        "banner_image",
-        "external_banner_url",
-        "sort_order",
-        "is_active",
-    )
+    list_display = ("id", "banner_url", "is_active")
+    list_editable = ("is_active",)
+    search_fields = ("banner_url",)
+    list_filter = ("is_active",)
+    fields = ("banner_url", "is_active")
 
 
 class OrderInventoryUsageInline(HomeXTabularInline):

@@ -18,3 +18,5 @@ COPY . .
 RUN chmod +x docker/entrypoint.sh docker/celery.sh
 
 EXPOSE 8000
+
+CMD ["/app/docker/entrypoint.sh"]

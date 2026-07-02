@@ -294,3 +294,7 @@ class FCMDeviceSerializer(serializers.ModelSerializer):
         model = FCMDevice
         fields = ("id", "token", "platform", "is_active", "created_at")
         read_only_fields = ("id", "is_active", "created_at")
+        extra_kwargs = {"token": {"validators": []}}
+
+    def validate_token(self, value):
+        return value.strip()

@@ -1,6 +1,8 @@
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
+from apps.accounts.models import FCMDevice
+from apps.integrations.adapters import PushClient
 from apps.notifications.models import Notification
 from apps.notifications.serializers import NotificationSerializer
 
@@ -50,6 +52,37 @@ def broadcast_notification_read_all(role, user_id):
         return
 
 
+def push_payload(notification):
+    payload = {
+        "event": "notification.created",
+        "notification_id": str(notification.id),
+        "role": notification.role,
+    }
+    payload.update(notification.data or {})
+    return payload
+
+
+def send_push_notification(notification):
+    target = notification.master if notification.role == "master" else notification.client
+    if not target or not target.notifications_enabled or not target.push_enabled:
+        return None
+
+    device_filter = {"role": notification.role, "is_active": True}
+    if notification.role == "master":
+        device_filter["master"] = target
+    else:
+        device_filter["client"] = target
+
+    tokens = list(FCMDevice.objects.filter(**device_filter).values_list("token", flat=True))
+    if not tokens:
+        return None
+
+    try:
+        return PushClient().send_many(tokens, notification.title, notification.body, data=push_payload(notification))
+    except Exception:
+        return None
+
+
 def create_notification(*, role, title, body="", data=None, client=None, master=None):
     notification = Notification.objects.create(
         role=role,
@@ -60,4 +93,5 @@ def create_notification(*, role, title, body="", data=None, client=None, master=
         data=data or {},
     )
     broadcast_notification(notification)
+    send_push_notification(notification)
     return notification

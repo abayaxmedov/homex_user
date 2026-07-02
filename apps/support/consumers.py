@@ -2,6 +2,7 @@ import json
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.core.serializers.json import DjangoJSONEncoder
 
 from apps.support.models import SupportChat
 from apps.support.serializers import SupportMessageSerializer
@@ -14,6 +15,14 @@ from apps.support.services import (
     support_group,
     user_can_access_chat,
 )
+
+
+def ws_json_dumps(payload):
+    return json.dumps(payload, cls=DjangoJSONEncoder)
+
+
+async def send_json_payload(consumer, payload):
+    await consumer.send(text_data=ws_json_dumps(payload))
 
 
 @database_sync_to_async
@@ -89,7 +98,7 @@ class BaseSupportConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
         history = await serialize_history(self.chat_id)
-        await self.send(text_data=json.dumps({"type": "history", "messages": history, "chat_id": self.chat_id}))
+        await send_json_payload(self, {"type": "history", "messages": history, "chat_id": self.chat_id})
 
     async def disconnect(self, close_code):
         if hasattr(self, "group_name"):
@@ -102,7 +111,7 @@ class BaseSupportConsumer(AsyncWebsocketConsumer):
             return
         content = (payload.get("content") or payload.get("message") or payload.get("text") or "").strip()
         if not content:
-            await self.send(text_data=json.dumps({"type": "error", "detail": "content (or message) required"}))
+            await send_json_payload(self, {"type": "error", "detail": "content (or message) required"})
             return
         data = await create_ws_message(self.chat_id, self.scope["user"], content)
         await self.channel_layer.group_send(
@@ -122,7 +131,7 @@ class BaseSupportConsumer(AsyncWebsocketConsumer):
 
     async def chat_message(self, event):
         message = event.get("message") or event.get("payload")
-        await self.send(text_data=json.dumps({"type": "message", "message": message, "data": message}))
+        await send_json_payload(self, {"type": "message", "message": message, "data": message})
 
 
 class ClientSupportConsumer(BaseSupportConsumer):
@@ -165,7 +174,7 @@ class AdminSupportChatConsumer(AsyncWebsocketConsumer):
                 },
             )
         history = await serialize_history(self.chat_id)
-        await self.send(text_data=json.dumps({"type": "history", "messages": history, "chat_id": self.chat_id}))
+        await send_json_payload(self, {"type": "history", "messages": history, "chat_id": self.chat_id})
 
     async def disconnect(self, close_code):
         if hasattr(self, "group_name"):
@@ -178,7 +187,7 @@ class AdminSupportChatConsumer(AsyncWebsocketConsumer):
             return
         content = (payload.get("content") or payload.get("message") or payload.get("text") or "").strip()
         if not content:
-            await self.send(text_data=json.dumps({"type": "error", "detail": "content (or message) required"}))
+            await send_json_payload(self, {"type": "error", "detail": "content (or message) required"})
             return
         data = await create_ws_message(self.chat_id, self.scope["user"], content)
         await self.channel_layer.group_send(
@@ -198,7 +207,7 @@ class AdminSupportChatConsumer(AsyncWebsocketConsumer):
 
     async def chat_message(self, event):
         message = event.get("message") or event.get("payload")
-        await self.send(text_data=json.dumps({"type": "message", "message": message, "data": message}))
+        await send_json_payload(self, {"type": "message", "message": message, "data": message})
 
 
 class AdminSupportLobbyConsumer(AsyncWebsocketConsumer):
@@ -214,4 +223,4 @@ class AdminSupportLobbyConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_discard(support_admin_group(), self.channel_name)
 
     async def chat_update(self, event):
-        await self.send(text_data=json.dumps({"type": "chat.update", **{k: v for k, v in event.items() if k != "type"}}))
+        await send_json_payload(self, {"type": "chat.update", **{k: v for k, v in event.items() if k != "type"}})
