@@ -60,7 +60,12 @@ class SupportChatSerializer(serializers.ModelSerializer):
         return _sender_payload(obj.participant, obj.participant_role)
 
     def get_last_message(self, obj):
-        last = obj.messages.select_related("client", "master", "admin").order_by("-created_at").first()
+        if hasattr(obj, "_last_message"):
+            last = obj._last_message
+        elif getattr(obj, "last_message_id", None):
+            last = SupportMessage.objects.select_related("client", "master", "admin").filter(pk=obj.last_message_id).first()
+        else:
+            last = obj.messages.select_related("client", "master", "admin").order_by("-created_at").first()
         if not last:
             return None
         return SupportMessageSerializer(last, context=self.context).data

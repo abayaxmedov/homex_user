@@ -8,12 +8,14 @@ from apps.common.views import EnvelopeMixin
 from apps.support.models import SupportChat, SupportMessage
 from apps.support.serializers import SupportChatSerializer, SupportMessageSerializer
 from apps.support.services import (
+    attach_latest_support_messages,
     broadcast_admin_update,
     broadcast_support_message,
     create_support_message,
     get_or_create_support_chat,
     mark_chat_read_by_admin,
     user_can_access_chat,
+    with_latest_support_message,
 )
 
 
@@ -53,7 +55,19 @@ class BaseSupportChatMeView(EnvelopeMixin, generics.RetrieveAPIView):
 class AdminSupportChatListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [IsStaffOrAdminUser]
     serializer_class = SupportChatSerializer
-    queryset = SupportChat.objects.select_related("client", "master").all()
+
+    def get_queryset(self):
+        return with_latest_support_message(SupportChat.objects.select_related("client", "master").all())
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        chats = list(page if page is not None else queryset)
+        attach_latest_support_messages(chats)
+        serializer = self.get_serializer(chats, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
 
 class AdminSupportMessageListView(EnvelopeMixin, generics.ListAPIView):

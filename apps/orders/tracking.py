@@ -1,9 +1,14 @@
+import logging
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
 from apps.accounts.serializers import MasterSummarySerializer
 from apps.common.geo import distance_km, eta_minutes
 from apps.orders.models import OrderStatus, OrderTracking
+
+
+logger = logging.getLogger(__name__)
 
 
 TRACKING_STEPS = (
@@ -122,6 +127,7 @@ def tracking_group(order_id):
 def broadcast_tracking(order, payload=None, event_type="tracking.update"):
     channel_layer = get_channel_layer()
     if not channel_layer:
+        logger.warning("Tracking broadcast skipped: channel layer is unavailable for order_id=%s", order.id)
         return
     try:
         async_to_sync(channel_layer.group_send)(
@@ -133,4 +139,5 @@ def broadcast_tracking(order, payload=None, event_type="tracking.update"):
             },
         )
     except Exception:
+        logger.exception("Failed to broadcast tracking update order_id=%s event_type=%s", order.id, event_type)
         return

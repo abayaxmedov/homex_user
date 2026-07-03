@@ -1,11 +1,19 @@
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
-from apps.accounts.models import FCMDevice
+from apps.accounts.models import Client, FCMDevice
 from apps.market.models import MarketCategory, MarketFavorite, MarketOrder, MarketProduct
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 from apps.support.models import SupportChat, SupportMessage
-from apps.support.services import create_support_message, mark_chat_read_by_admin
+from apps.support.serializers import SupportChatSerializer
+from apps.support.services import (
+    attach_latest_support_messages,
+    create_support_message,
+    mark_chat_read_by_admin,
+    with_latest_support_message,
+)
 
 
 def test_market_product_order_favorite_and_listing(client_api, client_user):
@@ -236,3 +244,40 @@ def test_support_chat_tracks_history_unread_and_admin_reply(client_api, client_u
     assert unread_after_reply == 1
     assert marked is True
     assert chat.unread_by_admin == 0
+
+
+def test_support_chat_serializer_uses_attached_last_messages(client_user):
+    users = [client_user]
+    users.extend(
+        Client.objects.create(phone=f"+99890123000{index}", first_name=f"Client {index}") for index in range(3)
+    )
+    for user in users:
+        chat = SupportChat.objects.create(client=user, participant_role="client")
+        create_support_message(chat=chat, sender=user, content=f"Xabar {user.id}")
+
+    chats = list(with_latest_support_message(SupportChat.objects.select_related("client", "master")).order_by("id"))
+    attach_latest_support_messages(chats)
+
+    with CaptureQueriesContext(connection) as captured:
+        data = SupportChatSerializer(chats, many=True).data
+
+    assert len(captured) == 0
+    assert len(data) == len(users)
+    assert all(item["last_message"] for item in data)
+
+
+def test_dashboard_support_threads_avoids_per_thread_queries(admin_api, client_user):
+    users = [client_user]
+    users.extend(
+        Client.objects.create(phone=f"+99890124000{index}", first_name=f"Thread {index}") for index in range(5)
+    )
+    for index, user in enumerate(users):
+        chat = SupportChat.objects.create(client=user, participant_role="client")
+        create_support_message(chat=chat, sender=user, content=f"Thread message {index}")
+
+    with CaptureQueriesContext(connection) as captured:
+        response = admin_api.get(reverse("dashboard-support-threads"))
+
+    assert response.status_code == 200
+    assert response.data["data"]["count"] == len(users)
+    assert len(captured) <= 4

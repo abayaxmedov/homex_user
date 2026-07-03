@@ -88,6 +88,7 @@ TRACKING_RESPONSE_EXAMPLE = {
 DEFAULT_HOME_BANNERS = [
     {
         "id": "00000000-0000-0000-0000-000000000000",
+        "banner_image": None,
         "banner_url": None,
         "is_active": True,
     }

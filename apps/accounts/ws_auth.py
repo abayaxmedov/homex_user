@@ -1,7 +1,12 @@
+import logging
+
 from channels.db import database_sync_to_async
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.accounts.models import Client, Master, MasterApprovalStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 @database_sync_to_async
@@ -16,7 +21,12 @@ def get_role_user(token_value):
         if role == "master":
             queryset = queryset.filter(approval_status=MasterApprovalStatus.APPROVED)
         return queryset.first()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "WebSocket token authentication failed: %s",
+            exc.__class__.__name__,
+            exc_info=True,
+        )
         return None
 
 

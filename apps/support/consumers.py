@@ -1,4 +1,5 @@
 import json
+import logging
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -15,6 +16,9 @@ from apps.support.services import (
     support_group,
     user_can_access_chat,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def ws_json_dumps(payload):
@@ -108,6 +112,11 @@ class BaseSupportConsumer(AsyncWebsocketConsumer):
         try:
             payload = json.loads(text_data or "{}")
         except Exception:
+            logger.warning(
+                "Invalid support WebSocket payload received for chat_id=%s",
+                self.chat_id,
+                exc_info=True,
+            )
             return
         content = (payload.get("content") or payload.get("message") or payload.get("text") or "").strip()
         if not content:
@@ -184,6 +193,11 @@ class AdminSupportChatConsumer(AsyncWebsocketConsumer):
         try:
             payload = json.loads(text_data or "{}")
         except Exception:
+            logger.warning(
+                "Invalid admin support WebSocket payload received for chat_id=%s",
+                self.chat_id,
+                exc_info=True,
+            )
             return
         content = (payload.get("content") or payload.get("message") or payload.get("text") or "").strip()
         if not content:
