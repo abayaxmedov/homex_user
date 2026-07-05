@@ -12,6 +12,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.filters import filter_masters_by_specialization
 from apps.accounts.models import Client, Master
 from apps.common.responses import success_response
 from apps.orders.models import Order, OrderStatus
@@ -544,6 +545,7 @@ class MasterCollectionAPIView(InternalAPIViewMixin, generics.ListCreateAPIView):
     def get_queryset(self):
         queryset = Master.objects.all()
         queryset = apply_search(queryset, self.request, ("first_name", "last_name", "phone", "specialization"))
+        queryset = filter_masters_by_specialization(queryset, self.request.query_params.get("specialization"))
         status_value = self.request.query_params.get("status")
         if status_value in MASTER_STATUS_COLORS:
             queryset = [master for master in queryset if master_status(master) == status_value]

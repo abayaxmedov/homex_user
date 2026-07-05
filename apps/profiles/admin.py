@@ -21,9 +21,9 @@ class ClientAddressAdmin(HomeXModelAdmin):
 
 @admin.register(ClientDevice)
 class ClientDeviceAdmin(HomeXModelAdmin):
-    list_display = ("client", "name", "category", "address", "status", "created_at")
+    list_display = ("client", "name", "model", "address", "status", "created_at")
     search_fields = ("client__phone", "name", "model")
-    list_filter = ("status", "category")
+    list_filter = ("status",)
 
 
 class TariffFeatureInline(HomeXTabularInline):

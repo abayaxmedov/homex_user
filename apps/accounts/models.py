@@ -62,6 +62,9 @@ class Master(TimeStampedUUIDModel):
     rejected_reason = models.CharField(max_length=255, blank=True)
     is_online = models.BooleanField(default=False)
     is_available = models.BooleanField(default=True)
+    is_blocked = models.BooleanField(default=False)
+    blocked_at = models.DateTimeField(null=True, blank=True)
+    block_reason = models.CharField(max_length=255, blank=True)
     lat = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
     lng = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
     last_location_at = models.DateTimeField(null=True, blank=True)
@@ -87,6 +90,22 @@ class Master(TimeStampedUUIDModel):
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
 
+    def block(self, reason=""):
+        from django.utils import timezone
+
+        self.is_blocked = True
+        self.is_active = False
+        self.is_available = False
+        self.is_online = False
+        self.block_reason = reason or ""
+        self.blocked_at = timezone.now()
+
+    def unblock(self):
+        self.is_blocked = False
+        self.is_active = True
+        self.block_reason = ""
+        self.blocked_at = None
+
     def set_password(self, raw_password):
         self.password = make_password(raw_password)
 
@@ -100,6 +119,29 @@ class Master(TimeStampedUUIDModel):
 
     def __str__(self):
         return self.full_name or self.phone
+
+
+class MasterApplication(Master):
+    """Proxy of :class:`Master` for pending (non-active) registration applications.
+
+    Registered as a separate admin entry so masters who left a registration
+    application (``approval_status=pending``) can be reviewed apart from the
+    active roster.
+    """
+
+    class Meta:
+        proxy = True
+        verbose_name = "Ariza qoldirgan usta"
+        verbose_name_plural = "Ariza qoldirgan ustalar"
+
+
+class BlockedMaster(Master):
+    """Proxy of :class:`Master` limited to blocked masters (``is_blocked=True``)."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "Bloklangan usta"
+        verbose_name_plural = "Bloklangan ustalar"
 
 
 class OTPRecord(TimeStampedUUIDModel):

@@ -82,13 +82,58 @@ def create_support_message(chat, sender, content, attachment=None):
     return message
 
 
+def mark_messages_read_by_admin(chat):
+    """Mark every incoming (client/master) message in the chat as read.
+
+    Admin replies (``sender_role="admin"``) are excluded, so ``is_read`` only
+    ever tracks whether the admin has seen the participant's messages.
+    Returns the number of message rows updated.
+    """
+    return (
+        chat.messages.filter(is_read=False)
+        .exclude(sender_role="admin")
+        .update(is_read=True)
+    )
+
+
 def mark_chat_read_by_admin(chat):
-    if not chat.unread_by_admin:
+    """Called whenever an admin opens/reads a support chat.
+
+    Flips ``is_read`` on the participant's messages, clears the
+    ``unread_by_admin`` counter and, when something actually changed, pushes a
+    realtime read-receipt to the participant. Idempotent: a repeat read of an
+    already-read chat is a no-op and emits no receipt.
+    """
+    updated = mark_messages_read_by_admin(chat)
+    if not chat.unread_by_admin and not updated:
         return False
     chat.unread_by_admin = 0
     chat.updated_at = timezone.now()
     chat.save(update_fields=["unread_by_admin", "updated_at"])
+    if updated:
+        broadcast_read_receipt(chat)
     return True
+
+
+def mark_support_thread_read_by_admin(client_id=None, master_id=None):
+    """Mark a dashboard support thread as read by the admin.
+
+    Dashboard threads are keyed by the client/master participant rather than a
+    ``SupportChat`` row, so resolve the matching chat and delegate to
+    :func:`mark_chat_read_by_admin` (which flips ``is_read``, clears the unread
+    counter and emits the read-receipt). Returns ``True`` if anything changed.
+    """
+    chat = None
+    if client_id:
+        chat = SupportChat.objects.filter(client_id=client_id).first()
+    elif master_id:
+        chat = SupportChat.objects.filter(master_id=master_id).first()
+    if not chat:
+        return False
+    changed = mark_chat_read_by_admin(chat)
+    if changed:
+        broadcast_admin_update(chat)
+    return changed
 
 
 def support_payload(message):
@@ -115,6 +160,28 @@ def broadcast_admin_update(chat):
                 "chat_id": str(chat.id),
                 "participant_role": chat.participant_role,
                 "unread_by_admin": chat.unread_by_admin,
+                "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
+            },
+        )
+    except Exception:
+        return
+
+
+def broadcast_read_receipt(chat):
+    """Notify the participant's WS group that the admin has read their messages."""
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+    group = chat_group(chat)
+    if not group:
+        return
+    try:
+        async_to_sync(channel_layer.group_send)(
+            group,
+            {
+                "type": "chat.read",
+                "chat_id": str(chat.id),
+                "reader_role": "admin",
                 "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
             },
         )

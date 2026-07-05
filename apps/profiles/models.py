@@ -26,11 +26,13 @@ class ClientDevice(TimeStampedUUIDModel):
 
     client = models.ForeignKey("accounts.Client", on_delete=models.CASCADE, related_name="client_devices")
     name = models.CharField(max_length=200)
-    category = models.ForeignKey("services.ServiceCategory", on_delete=models.PROTECT)
     model = models.CharField(max_length=100, blank=True)
     image = models.ImageField(upload_to="clients/devices/", null=True, blank=True)
     address = models.ForeignKey(ClientAddress, on_delete=models.CASCADE, related_name="devices")
     status = models.CharField(max_length=20, choices=STATUSES, default=ACTIVE)
+
+    class Meta:
+        ordering = ("-created_at",)
 
     def __str__(self):
         return self.name

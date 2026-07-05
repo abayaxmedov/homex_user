@@ -9,7 +9,6 @@ from apps.profiles.models import (
     PrivacyPolicy,
     Tariff, TariffFeature,
 )
-from apps.services.serializers import ServiceCategorySerializer
 
 
 class ClientAddressSerializer(serializers.ModelSerializer):
@@ -20,44 +19,37 @@ class ClientAddressSerializer(serializers.ModelSerializer):
 
 
 class ClientDeviceSerializer(serializers.ModelSerializer):
-    category_detail = ServiceCategorySerializer(source="category", read_only=True)
     address_detail = ClientAddressSerializer(source="address", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
     order_count = serializers.SerializerMethodField()
     last_order = serializers.SerializerMethodField()
 
     class Meta:
         model = ClientDevice
+        # Figma "Yangi uskuna" form: name, model, image, address.
         fields = (
             "id",
             "name",
-            "category",
-            "category_detail",
             "model",
             "image",
             "address",
             "address_detail",
             "status",
+            "status_label",
             "order_count",
             "last_order",
             "created_at",
         )
-        read_only_fields = ("id", "created_at")
+        read_only_fields = ("id", "status_label", "created_at")
 
     @extend_schema_field(serializers.IntegerField)
     def get_order_count(self, obj):
-        from apps.orders.models import Order
-
-        return Order.objects.filter(client=obj.client, address=obj.address, service__category=obj.category).count()
+        # Orders explicitly linked to this device (Order.device).
+        return obj.orders.count()
 
     @extend_schema_field(serializers.DictField(allow_null=True))
     def get_last_order(self, obj):
-        from apps.orders.models import Order
-
-        order = (
-            Order.objects.filter(client=obj.client, address=obj.address, service__category=obj.category)
-            .order_by("-created_at")
-            .first()
-        )
+        order = obj.orders.order_by("-created_at").first()
         if not order:
             return None
         return {

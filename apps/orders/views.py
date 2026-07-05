@@ -31,6 +31,7 @@ from apps.orders.serializers import (
     PaymentStartSerializer,
     ReviewSerializer,
 )
+from apps.accounts.filters import filter_masters_by_specialization
 from apps.orders.tracking import broadcast_tracking, ensure_tracking, tracking_payload
 from apps.services.models import ServiceCategory
 from apps.services.serializers import ServiceCategorySerializer
@@ -231,7 +232,7 @@ class MasterOrderAcceptView(generics.GenericAPIView):
             body=f"{request.user.full_name} buyurtmangizni qabul qildi",
             data={"order_id": str(order.id), "status": order.status},
         )
-        broadcast_tracking(order, event_type="tracking.update")
+        # Status broadcast is handled centrally by the Order post_save signal.
         return success_response(OrderSerializer(order).data)
 
 
@@ -271,7 +272,7 @@ class MasterOrderStartView(generics.GenericAPIView):
                 body="Usta buyurtma bo'yicha ishni boshladi",
                 data={"order_id": str(order.id), "status": order.status},
             )
-            broadcast_tracking(order, event_type="tracking.update")
+            # Status broadcast is handled centrally by the Order post_save signal.
         return success_response(OrderSerializer(order).data)
 
 
@@ -294,7 +295,7 @@ class MasterOrderRejectView(generics.GenericAPIView):
             body=order.rejected_reason,
             data={"order_id": str(order.id), "status": order.status},
         )
-        broadcast_tracking(order, event_type="tracking.update")
+        # Status broadcast is handled centrally by the Order post_save signal.
         return success_response(OrderSerializer(order).data)
 
 
@@ -341,7 +342,7 @@ class MasterOrderCompleteView(generics.GenericAPIView):
                 "receipt_download_url": receipt_download_url(request, order),
             },
         )
-        broadcast_tracking(order, event_type="tracking.update")
+        # Status broadcast is handled centrally by the Order post_save signal.
         return success_response(
             {
                 "order": OrderSerializer(order, context={"request": request}).data,
@@ -564,9 +565,7 @@ class NearbyMasterListView(EnvelopeMixin, generics.ListAPIView):
 
     def get_queryset(self):
         queryset = Master.objects.filter(is_online=True, is_active=True, is_available=True)
-        specialization = self.request.query_params.get("specialization")
-        if specialization:
-            queryset = queryset.filter(specialization__icontains=specialization)
+        queryset = filter_masters_by_specialization(queryset, self.request.query_params.get("specialization"))
         lat = self.request.query_params.get("lat")
         lng = self.request.query_params.get("lng")
         try:
@@ -667,7 +666,7 @@ class ClientOrderCancelView(generics.GenericAPIView):
                 body=order.cancel_reason,
                 data={"order_id": str(order.id), "status": order.status},
             )
-        broadcast_tracking(order, event_type="tracking.update")
+        # Status broadcast is handled centrally by the Order post_save signal.
         return success_response(OrderSerializer(order).data)
 
 

@@ -38,30 +38,65 @@
     return item;
   }
 
-  function updateUnreadBadge(chatId, unread) {
+  function findRow(chatId) {
+    var badge = document.querySelector('.support-status-badge[data-chat-id="' + chatId + '"]');
+    if (badge) {
+      var badgeRow = badge.closest("tr");
+      if (badgeRow) return badgeRow;
+    }
     var changeUrl = "/admin/support/supportchat/" + chatId + "/change/";
     var anchor = document.querySelector('a[href="' + changeUrl + '"]');
-    if (!anchor) return;
-    var row = anchor.closest("tr");
-    var cell = row ? row.querySelector("th, td") : null;
-    if (!cell) return;
-    var badge = cell.querySelector(".support-unread-badge");
-    if (!unread) {
-      if (badge) badge.remove();
-      return;
+    return anchor ? anchor.closest("tr") : null;
+  }
+
+  function paintUnread(badge, unread) {
+    badge.setAttribute("data-unread", unread);
+    badge.style.display = "inline-flex";
+    badge.style.alignItems = "center";
+    badge.style.gap = "4px";
+    badge.style.background = "#dc3545";
+    badge.style.color = "#fff";
+    badge.style.fontWeight = "700";
+    badge.style.padding = "2px 9px";
+    badge.style.borderRadius = "10px";
+    badge.style.fontSize = "11px";
+    badge.style.whiteSpace = "nowrap";
+    badge.textContent = "● Yangi (" + unread + ")";
+  }
+
+  function paintRead(badge) {
+    badge.setAttribute("data-unread", "0");
+    badge.style.display = "";
+    badge.style.background = "";
+    badge.style.color = "#6c757d";
+    badge.style.fontWeight = "";
+    badge.style.padding = "";
+    badge.style.borderRadius = "";
+    badge.style.fontSize = "11px";
+    badge.style.whiteSpace = "nowrap";
+    badge.textContent = "O‘qilgan";
+  }
+
+  function floatRowToTop(row) {
+    var tbody = row.parentNode;
+    if (!tbody || tbody.firstElementChild === row) return;
+    tbody.insertBefore(row, tbody.firstElementChild);
+    row.style.transition = "background-color 0.8s ease";
+    row.style.backgroundColor = "#fff3cd";
+    setTimeout(function () {
+      row.style.backgroundColor = "";
+    }, 1400);
+  }
+
+  function updateUnreadBadge(chatId, unread) {
+    var row = findRow(chatId);
+    if (!row) return;
+    var badge = row.querySelector(".support-status-badge");
+    if (badge) {
+      if (unread) paintUnread(badge, unread);
+      else paintRead(badge);
     }
-    if (!badge) {
-      badge = document.createElement("span");
-      badge.className = "support-unread-badge";
-      badge.style.background = "#dc3545";
-      badge.style.color = "#fff";
-      badge.style.padding = "2px 6px";
-      badge.style.borderRadius = "10px";
-      badge.style.marginLeft = "8px";
-      badge.style.fontSize = "12px";
-      cell.appendChild(badge);
-    }
-    badge.textContent = unread;
+    if (unread) floatRowToTop(row);
   }
 
   function showPreview(chatId) {

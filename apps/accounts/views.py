@@ -370,7 +370,7 @@ class ClientAppBootstrapView(generics.GenericAPIView):
                 "addresses_count": request.user.addresses.count(),
                 "devices_count": request.user.client_devices.count(),
                 "devices": ClientDeviceSerializer(
-                    request.user.client_devices.select_related("category", "address")[:5],
+                    request.user.client_devices.select_related("address")[:5],
                     many=True,
                     context={"request": request},
                 ).data,

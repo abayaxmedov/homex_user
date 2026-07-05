@@ -2,9 +2,11 @@ import json
 
 from django.contrib import admin, messages
 from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models import Case, IntegerField, Value, When
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect
 from django.urls import path, reverse
+from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from apps.common.admin_mixins import HomeXModelAdmin
@@ -18,9 +20,26 @@ from apps.support.services import (
 )
 
 
+class UnreadSupportFilter(admin.SimpleListFilter):
+    """Filter support chats by whether they have unread (new) messages."""
+
+    title = "Yangi xabarlar"
+    parameter_name = "unread"
+
+    def lookups(self, request, model_admin):
+        return (("1", "Yangi xabari borlar"), ("0", "O'qilganlar"))
+
+    def queryset(self, request, queryset):
+        if self.value() == "1":
+            return queryset.filter(unread_by_admin__gt=0)
+        if self.value() == "0":
+            return queryset.filter(unread_by_admin=0)
+        return queryset
+
+
 @admin.register(SupportChat)
 class SupportChatAdmin(HomeXModelAdmin):
-    list_display = ("participant_role", "participant_display", "unread_by_admin", "updated_at", "open_chat")
+    list_display = ("status_badge", "participant_role", "participant_display", "unread_by_admin", "updated_at", "open_chat")
     list_display_links = ("participant_role", "participant_display")
     search_fields = (
         "client__phone",
@@ -30,14 +49,55 @@ class SupportChatAdmin(HomeXModelAdmin):
         "master__first_name",
         "master__last_name",
     )
-    list_filter = ("participant_role",)
+    list_filter = (UnreadSupportFilter, "participant_role")
     readonly_fields = ("created_at", "updated_at", "unread_by_admin")
     actions = ["reply_to_selected"]
+
+    def get_queryset(self, request):
+        # Annotate a sort key BEFORE ordering is applied so chats with new
+        # (unread) messages float to the top. We build the queryset the same way
+        # Django's ModelAdmin.get_queryset does, but inject the annotation first
+        # so get_ordering can reference it.
+        queryset = self.model._default_manager.get_queryset().annotate(
+            _has_unread=Case(
+                When(unread_by_admin__gt=0, then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+        ordering = self.get_ordering(request)
+        if ordering:
+            queryset = queryset.order_by(*ordering)
+        return queryset
+
+    def get_ordering(self, request):
+        # Unread chats first, then most recently updated.
+        return ("-_has_unread", "-updated_at")
 
     def participant_display(self, obj):
         return obj.participant or "-"
 
     participant_display.short_description = "Participant"
+
+    def status_badge(self, obj):
+        unread = obj.unread_by_admin or 0
+        if unread:
+            return format_html(
+                '<span class="support-status-badge" data-chat-id="{}" data-unread="{}" '
+                'style="display:inline-flex;align-items:center;gap:4px;background:#dc3545;'
+                'color:#fff;font-weight:700;padding:2px 9px;border-radius:10px;font-size:11px;'
+                'white-space:nowrap;">● Yangi ({})</span>',
+                obj.id,
+                unread,
+                unread,
+            )
+        return format_html(
+            '<span class="support-status-badge" data-chat-id="{}" data-unread="0" '
+            'style="color:#6c757d;font-size:11px;white-space:nowrap;">O‘qilgan</span>',
+            obj.id,
+        )
+
+    status_badge.short_description = "Holat"
 
     def open_chat(self, obj):
         url = reverse("admin:support_supportchat_change", args=(obj.id,))

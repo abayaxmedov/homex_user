@@ -54,7 +54,6 @@ def test_client_device_crud_and_order_hint(client_api, client_user, service):
         reverse("client-devices"),
         {
             "name": "Samsung AR12",
-            "category": str(service.category_id),
             "model": "AR12",
             "address": str(address.id),
             "status": "active",
@@ -66,7 +65,7 @@ def test_client_device_crud_and_order_hint(client_api, client_user, service):
     device = ClientDevice.objects.get(client=client_user)
     order_hint = client_api.post(reverse("client-device-order", args=[device.id]))
     assert order_hint.status_code == 200
-    assert str(order_hint.data["data"]["device_id"]) == str(device.id)
+    assert str(order_hint.data["data"]["prefill"]["device"]) == str(device.id)
 
 
 def test_tariff_subscription_updates_client(client_api, client_user):

@@ -55,7 +55,7 @@ def file_url(request, file_field):
 
 
 def master_status(master):
-    if not master.is_active:
+    if master.is_blocked or not master.is_active:
         return "blocked"
     if not master.is_available:
         return "busy"
@@ -66,17 +66,16 @@ def master_status(master):
 
 def apply_master_status(master, status):
     if status == "blocked":
-        master.is_active = False
-        master.is_available = False
+        master.block(reason=getattr(master, "block_reason", "") or "")
     elif status == "busy":
-        master.is_active = True
+        master.unblock()
         master.is_available = False
     elif status == "active":
-        master.is_active = True
+        master.unblock()
         master.is_available = True
         master.is_online = True
     elif status == "inactive":
-        master.is_active = True
+        master.unblock()
         master.is_available = True
         master.is_online = False
 

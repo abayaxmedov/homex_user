@@ -1,8 +1,10 @@
+import asyncio
 import json
 from datetime import date, time
 from io import BytesIO
 from zipfile import ZipFile
 
+import pytest
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.urls import reverse
@@ -12,10 +14,17 @@ from apps.accounts.tokens import issue_role_tokens
 from apps.accounts.ws_auth import RoleJWTAuthMiddleware
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification, notification_group
+from apps.orders.consumers import ClientTrackingConsumer
 from apps.orders.models import Order, OrderStatus, OrderTracking
+from apps.orders.tracking import tracking_group
 from apps.support.consumers import serialize_history, ws_json_dumps
-from apps.support.models import SupportMessage
-from apps.support.services import create_support_message, get_or_create_support_chat, support_group
+from apps.support.models import SupportChat, SupportMessage
+from apps.support.services import (
+    create_support_message,
+    get_or_create_support_chat,
+    mark_chat_read_by_admin,
+    support_group,
+)
 
 
 def make_order(client_user, service, **kwargs):
@@ -92,6 +101,114 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
     assert completed_track.data["data"]["tracking_status"] == "master_finished"
     assert completed_track.data["data"]["tracking_status_label"] == "Usta ishni tugatgan"
     assert completed_track.data["data"]["receipt_available"] is True
+
+
+def test_tracking_socket_receives_status_on_master_accept(master_api, master, client_user, service):
+    order = make_order(client_user, service)
+    channel_layer = get_channel_layer()
+    channel_name = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
+
+    response = master_api.post(reverse("master-order-accept", args=[order.id]))
+    event = async_to_sync(channel_layer.receive)(channel_name)
+
+    assert response.status_code == 200
+    assert event["type"] == "tracking.update"
+    assert event["payload"]["status"] == OrderStatus.ACCEPTED
+    assert event["payload"]["tracking_status"] == "master_on_way"
+
+
+def test_tracking_socket_receives_full_status_flow(master_api, master, client_user, service):
+    order = make_order(client_user, service)
+    channel_layer = get_channel_layer()
+    channel_name = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
+
+    master_api.post(reverse("master-order-accept", args=[order.id]))
+    accepted = async_to_sync(channel_layer.receive)(channel_name)
+    master_api.post(reverse("master-order-start", args=[order.id]))
+    started = async_to_sync(channel_layer.receive)(channel_name)
+    master_api.post(
+        reverse("master-order-complete", args=[order.id]),
+        {"service_fee": "100000.00", "payment_type": "cash"},
+        format="json",
+    )
+    completed = async_to_sync(channel_layer.receive)(channel_name)
+
+    # Every transition reaches the tracking socket with a distinct status.
+    assert accepted["payload"]["tracking_status"] == "master_on_way"
+    assert started["payload"]["tracking_status"] == "master_working"
+    assert completed["payload"]["tracking_status"] == "master_finished"
+    assert [accepted["payload"]["status"], started["payload"]["status"], completed["payload"]["status"]] == [
+        OrderStatus.ACCEPTED,
+        OrderStatus.IN_PROGRESS,
+        OrderStatus.COMPLETED,
+    ]
+
+
+def test_tracking_socket_receives_status_on_dashboard_assign(admin_api, master, client_user, service):
+    # The dashboard "assign master" flow previously changed status without ever
+    # notifying the tracking socket; the centralized signal now covers it.
+    order = make_order(client_user, service)
+    channel_layer = get_channel_layer()
+    channel_name = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
+
+    response = admin_api.patch(
+        reverse("dashboard-order-assign", args=[order.id]),
+        {"master": str(master.id)},
+        format="json",
+    )
+    event = async_to_sync(channel_layer.receive)(channel_name)
+
+    assert response.status_code == 200
+    assert event["payload"]["status"] == OrderStatus.ACCEPTED
+    assert event["payload"]["tracking_status"] == "master_on_way"
+
+
+def test_tracking_socket_silent_without_status_change(master, client_user, service):
+    order = make_order(client_user, service, master=master, status=OrderStatus.ACCEPTED)
+    channel_layer = get_channel_layer()
+    channel_name = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
+
+    # A non-status change must not emit a tracking event.
+    order.note = "keyinroq keling"
+    order.save(update_fields=["note", "updated_at"])
+
+    async def _expect_empty():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(channel_layer.receive(channel_name), timeout=0.2)
+
+    async_to_sync(_expect_empty)()
+
+
+def test_client_tracking_consumer_forwards_status_updates():
+    # The consumer must forward every broadcast status (not just the connect-time
+    # snapshot) to the client, carrying the full status payload.
+    consumer = ClientTrackingConsumer()
+    captured = {}
+
+    async def fake_send(text_data=None, **kwargs):
+        captured["text"] = text_data
+
+    consumer.send = fake_send
+    event = {
+        "type": "tracking.update",
+        "event": "tracking.update",
+        "payload": {
+            "order_id": "order-1",
+            "status": "completed",
+            "tracking_status": "master_finished",
+        },
+    }
+
+    async_to_sync(consumer.tracking_update)(event)
+
+    data = json.loads(captured["text"])
+    assert data["type"] == "tracking.update"
+    assert data["data"]["status"] == "completed"
+    assert data["data"]["tracking_status"] == "master_finished"
 
 
 def test_client_receipt_download_requires_master_confirmation(client_api, master_api, master, client_user, service):
@@ -213,6 +330,24 @@ def test_support_rest_broadcasts_realtime_event(client_api, client_user):
     json.dumps(event["payload"])
     assert event["payload"]["message"] == "Yordam kerak"
     assert SupportMessage.objects.filter(client=client_user, message="Yordam kerak").exists()
+
+
+def test_admin_read_broadcasts_read_receipt_to_participant(client_api, client_user):
+    client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    chat = SupportChat.objects.get(client=client_user)
+
+    channel_layer = get_channel_layer()
+    channel_name = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(support_group("client", client_user.id), channel_name)
+
+    changed = mark_chat_read_by_admin(chat)
+    event = async_to_sync(channel_layer.receive)(channel_name)
+
+    assert changed is True
+    assert event["type"] == "chat.read"
+    assert event["reader_role"] == "admin"
+    assert event["chat_id"] == str(chat.id)
+    assert SupportMessage.objects.get(client=client_user, sender_role="client").is_read is True
 
 
 def test_support_websocket_history_payload_is_json_safe(client_user):

@@ -1,7 +1,15 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from apps.accounts.models import Client, FCMDevice, Master, MasterApprovalStatus, OTPRecord
+from apps.accounts.models import (
+    BlockedMaster,
+    Client,
+    FCMDevice,
+    Master,
+    MasterApplication,
+    MasterApprovalStatus,
+    OTPRecord,
+)
 from apps.common.admin_mixins import HomeXModelAdmin
 
 
@@ -26,9 +34,9 @@ class MasterAdmin(HomeXModelAdmin):
         "is_active",
     )
     search_fields = ("phone", "first_name", "last_name", "specialization")
-    list_filter = ("approval_status", "is_online", "is_available", "is_active", "language")
-    readonly_fields = ("approved_at",)
-    actions = ("approve_masters", "reject_masters")
+    list_filter = ("approval_status", "is_blocked", "is_online", "is_available", "is_active", "language")
+    readonly_fields = ("approved_at", "blocked_at")
+    actions = ("approve_masters", "reject_masters", "block_masters", "unblock_masters")
 
     @admin.action(description="Tanlangan ustalarni tasdiqlash")
     def approve_masters(self, request, queryset):
@@ -46,6 +54,60 @@ class MasterAdmin(HomeXModelAdmin):
             is_active=False,
             approved_at=None,
         )
+
+    @admin.action(description="Tanlangan ustalarni bloklash")
+    def block_masters(self, request, queryset):
+        for master in queryset:
+            master.block()
+            master.save(update_fields=["is_blocked", "is_active", "is_available", "is_online", "block_reason", "blocked_at", "updated_at"])
+
+    @admin.action(description="Tanlangan ustalarni blokdan chiqarish")
+    def unblock_masters(self, request, queryset):
+        for master in queryset:
+            master.unblock()
+            master.save(update_fields=["is_blocked", "is_active", "block_reason", "blocked_at", "updated_at"])
+
+
+@admin.register(MasterApplication)
+class MasterApplicationAdmin(MasterAdmin):
+    """Separate admin listing for masters awaiting approval (non-active)."""
+
+    list_display = (
+        "phone",
+        "full_name",
+        "specialization",
+        "approval_status",
+        "created_at",
+    )
+    list_filter = ("specialization", "language")
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(approval_status=MasterApprovalStatus.PENDING)
+
+    def has_add_permission(self, request):
+        # Applications are created through master registration, not by hand.
+        return False
+
+
+@admin.register(BlockedMaster)
+class BlockedMasterAdmin(MasterAdmin):
+    """Separate admin listing for blocked masters with block/unblock actions."""
+
+    list_display = ("phone", "full_name", "specialization", "block_reason", "blocked_at")
+    list_filter = ("specialization", "language")
+    actions = ("unblock_masters",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(is_blocked=True)
+
+    def has_add_permission(self, request):
+        return False
+
+    @admin.action(description="Tanlangan ustalarni blokdan chiqarish")
+    def unblock_masters(self, request, queryset):
+        for master in queryset:
+            master.unblock()
+            master.save(update_fields=["is_blocked", "is_active", "block_reason", "blocked_at", "updated_at"])
 
 
 @admin.register(OTPRecord)

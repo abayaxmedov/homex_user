@@ -133,6 +133,17 @@ class BaseSupportConsumer(AsyncWebsocketConsumer):
         message = event.get("message") or event.get("payload")
         await send_json_payload(self, {"type": "message", "message": message, "data": message})
 
+    async def chat_read(self, event):
+        await send_json_payload(
+            self,
+            {
+                "type": "read",
+                "chat_id": event.get("chat_id"),
+                "reader_role": event.get("reader_role", "admin"),
+                "updated_at": event.get("updated_at"),
+            },
+        )
+
 
 class ClientSupportConsumer(BaseSupportConsumer):
     role = "client"
@@ -208,6 +219,17 @@ class AdminSupportChatConsumer(AsyncWebsocketConsumer):
     async def chat_message(self, event):
         message = event.get("message") or event.get("payload")
         await send_json_payload(self, {"type": "message", "message": message, "data": message})
+
+    async def chat_read(self, event):
+        await send_json_payload(
+            self,
+            {
+                "type": "read",
+                "chat_id": event.get("chat_id"),
+                "reader_role": event.get("reader_role", "admin"),
+                "updated_at": event.get("updated_at"),
+            },
+        )
 
 
 class AdminSupportLobbyConsumer(AsyncWebsocketConsumer):

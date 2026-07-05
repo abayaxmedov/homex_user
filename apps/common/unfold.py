@@ -35,3 +35,21 @@ def pending_withdraw_badge(request):
     from apps.wallet.models import WithdrawRequest
 
     return WithdrawRequest.objects.filter(status=WithdrawRequest.PENDING).count()
+
+
+def pending_masters_badge(request):
+    from apps.accounts.models import Master, MasterApprovalStatus
+
+    return Master.objects.filter(approval_status=MasterApprovalStatus.PENDING).count()
+
+
+def blocked_masters_badge(request):
+    from apps.accounts.models import Master
+
+    return Master.objects.filter(is_blocked=True).count()
+
+
+def pending_cash_handover_badge(request):
+    from apps.wallet.models import WithdrawRequest
+
+    return WithdrawRequest.objects.filter(status=WithdrawRequest.PENDING).count()

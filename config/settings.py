@@ -298,6 +298,20 @@ UNFOLD = {
                         "link": reverse_lazy("admin:accounts_master_changelist"),
                     },
                     {
+                        "title": "Ariza qoldirgan ustalar",
+                        "icon": "how_to_reg",
+                        "link": reverse_lazy("admin:accounts_masterapplication_changelist"),
+                        "badge": "apps.common.unfold.pending_masters_badge",
+                        "badge_variant": "warning",
+                    },
+                    {
+                        "title": "Bloklangan ustalar",
+                        "icon": "block",
+                        "link": reverse_lazy("admin:accounts_blockedmaster_changelist"),
+                        "badge": "apps.common.unfold.blocked_masters_badge",
+                        "badge_variant": "danger",
+                    },
+                    {
                         "title": "FCM devices",
                         "icon": "phonelink_ring",
                         "link": reverse_lazy("admin:accounts_fcmdevice_changelist"),
@@ -388,6 +402,13 @@ UNFOLD = {
                         "icon": "payments",
                         "link": reverse_lazy("admin:wallet_withdrawrequest_changelist"),
                         "badge": "apps.common.unfold.pending_withdraw_badge",
+                        "badge_variant": "warning",
+                    },
+                    {
+                        "title": "Masterdan naqd pul qabul qilish",
+                        "icon": "account_balance",
+                        "link": reverse_lazy("admin:wallet_cashhandover_changelist"),
+                        "badge": "apps.common.unfold.pending_cash_handover_badge",
                         "badge_variant": "warning",
                     },
                     {

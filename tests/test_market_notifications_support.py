@@ -1,9 +1,12 @@
+from django.contrib.admin.sites import site as admin_site
+from django.test import RequestFactory
 from django.urls import reverse
 
 from apps.accounts.models import FCMDevice
 from apps.market.models import MarketCategory, MarketFavorite, MarketOrder, MarketProduct
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
+from apps.support.admin import SupportChatAdmin
 from apps.support.models import SupportChat, SupportMessage
 from apps.support.services import create_support_message, mark_chat_read_by_admin
 
@@ -236,3 +239,110 @@ def test_support_chat_tracks_history_unread_and_admin_reply(client_api, client_u
     assert unread_after_reply == 1
     assert marked is True
     assert chat.unread_by_admin == 0
+    assert chat.messages.get(sender_role="client").is_read is True
+
+
+def test_admin_read_marks_incoming_messages_but_not_admin_reply(client_api, client_user, django_admin_user):
+    client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    chat = SupportChat.objects.get(client=client_user)
+    admin_reply = create_support_message(chat=chat, sender=django_admin_user, content="Admin javobi")
+    incoming = SupportMessage.objects.get(chat=chat, sender_role="client")
+
+    assert incoming.is_read is False  # unread until the admin opens the chat
+
+    changed = mark_chat_read_by_admin(chat)
+
+    incoming.refresh_from_db()
+    admin_reply.refresh_from_db()
+    chat.refresh_from_db()
+    assert changed is True
+    assert incoming.is_read is True  # participant message is now marked read
+    assert admin_reply.is_read is False  # admin's own reply is untouched
+    assert chat.unread_by_admin == 0
+    # Re-reading an already-read chat is a no-op and reports no change.
+    assert mark_chat_read_by_admin(chat) is False
+
+
+def test_dashboard_opening_thread_marks_incoming_messages_read(admin_api, client_api, client_user):
+    client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    incoming = SupportMessage.objects.get(client=client_user, sender_role="client")
+    assert incoming.is_read is False
+
+    response = admin_api.get(reverse("dashboard-support-messages"), {"client": str(client_user.id)})
+
+    assert response.status_code == 200
+    incoming.refresh_from_db()
+    assert incoming.is_read is True  # opening the thread read the message
+
+    threads = admin_api.get(reverse("dashboard-support-threads"))
+    assert threads.status_code == 200
+    assert threads.data["data"]["results"][0]["unread_count"] == 0
+
+
+def test_dashboard_thread_unread_count_ignores_admin_reply(admin_api, client_api, client_user, django_admin_user):
+    client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    chat = SupportChat.objects.get(client=client_user)
+    create_support_message(chat=chat, sender=django_admin_user, content="Admin javobi")
+
+    threads = admin_api.get(reverse("dashboard-support-threads"))
+
+    assert threads.status_code == 200
+    # Only the client's message is unread; the admin's own reply must not be counted.
+    assert threads.data["data"]["results"][0]["unread_count"] == 1
+
+
+def test_dashboard_threads_expose_status_and_sort_unread_first(admin_api, client_api, client_user, master_api, master):
+    # Client thread keeps an unread message; master thread is read by the admin.
+    client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    master_api.post(reverse("master-support"), {"message": "Buyurtma savoli"}, format="json")
+    master_chat = SupportChat.objects.get(master=master)
+    mark_chat_read_by_admin(master_chat)  # master thread now fully read (newer activity)
+
+    response = admin_api.get(reverse("dashboard-support-threads"))
+
+    assert response.status_code == 200
+    results = response.data["data"]["results"]
+    assert len(results) == 2
+    # Unread thread floats to the top even though the master message is newer.
+    assert results[0]["status"] == "unread"
+    assert results[0]["has_unread"] is True
+    assert results[0]["unread_count"] == 1
+    assert results[0]["client"] is not None
+    assert results[1]["status"] == "read"
+    assert results[1]["has_unread"] is False
+    assert results[1]["unread_count"] == 0
+
+
+def test_admin_supportchat_orders_unread_first_and_renders_badge(django_admin_user, client_api, client_user, master_api, master):
+    # Client chat stays unread; master chat is read (and thus updated most recently).
+    client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    master_api.post(reverse("master-support"), {"message": "Buyurtma savoli"}, format="json")
+    client_chat = SupportChat.objects.get(client=client_user)
+    master_chat = SupportChat.objects.get(master=master)
+    mark_chat_read_by_admin(master_chat)
+
+    model_admin = SupportChatAdmin(SupportChat, admin_site)
+    request = RequestFactory().get("/admin/support/supportchat/")
+    request.user = django_admin_user
+    ordered = list(model_admin.get_queryset(request).order_by(*model_admin.get_ordering(request)))
+
+    # Unread chat is ordered before the read (but more recently updated) one.
+    assert ordered.index(client_chat) < ordered.index(master_chat)
+
+    unread_badge = model_admin.status_badge(client_chat)
+    read_badge = model_admin.status_badge(master_chat)
+    assert "Yangi" in unread_badge and "#dc3545" in unread_badge
+    assert 'data-chat-id="%s"' % client_chat.id in unread_badge
+    assert "O‘qilgan" in read_badge
+
+
+def test_admin_supportchat_changelist_renders_with_badge(client, django_admin_user, client_api, client_user):
+    client_api.post(reverse("client-support"), {"message": "Yordam kerak"}, format="json")
+    client.force_login(django_admin_user)
+
+    response = client.get(reverse("admin:support_supportchat_changelist"))
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert "support-status-badge" in content  # badge column is server-rendered
+    assert "Yangi" in content

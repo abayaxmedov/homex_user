@@ -10,7 +10,8 @@ from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schem
 from rest_framework import generics, permissions
 from rest_framework.exceptions import ValidationError
 
-from apps.accounts.models import Client, Master
+from apps.accounts.filters import filter_masters_by_specialization, specialization_counts
+from apps.accounts.models import Client, Master, MasterApprovalStatus
 from apps.accounts.permissions import IsStaffOrAdminUser
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
@@ -28,9 +29,12 @@ from apps.orders.models import Order, OrderStatus
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
 from apps.support.models import SupportMessage
+from apps.support.services import mark_support_thread_read_by_admin
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
+from apps.wallet.services import accept_cash_handover, reject_cash_handover
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
 from .serializers import (
+    DashboardCashHandoverSerializer,
     DashboardCompanyExpenseSerializer,
     DashboardClientMiniSerializer,
     DashboardClientSerializer,
@@ -46,6 +50,8 @@ from .serializers import (
     DashboardMasterMiniSerializer,
     DashboardMasterLocationSerializer,
     DashboardMasterInventorySerializer,
+    DashboardMasterApplicationSerializer,
+    DashboardMasterBlockSerializer,
     DashboardMasterSerializer,
     DashboardMasterStatusSerializer,
     DashboardMasterWalletSerializer,
@@ -457,7 +463,18 @@ class DashboardClientOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, gene
 @extend_schema(
     tags=[DASHBOARD_MASTERS_TAG],
     summary="Dashboard masters list/create",
-    description="Ustalar sahifasi uchun ustalar ro'yxatini search/status filter bilan qaytaradi yoki yangi usta yaratadi.",
+    description="Ustalar sahifasi uchun ustalar ro'yxatini search/status/specialization filter bilan qaytaradi yoki yangi usta yaratadi.",
+    parameters=[
+        OpenApiParameter("search", str, OpenApiParameter.QUERY, required=False, description="Ism, familiya yoki telefon bo'yicha qidiruv."),
+        OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False, description="active, busy, inactive, blocked."),
+        OpenApiParameter(
+            "specialization",
+            str,
+            OpenApiParameter.QUERY,
+            required=False,
+            description="Mutaxassislik bo'yicha filter. Vergul bilan bir nechta qiymat berish mumkin (masalan `Santexnik,Elektrik`).",
+        ),
+    ],
 )
 class DashboardMasterListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMasterSerializer
@@ -473,14 +490,15 @@ class DashboardMasterListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, 
         status = self.request.query_params.get("status")
         if search:
             queryset = queryset.filter(Q(first_name__icontains=search) | Q(last_name__icontains=search) | Q(phone__icontains=search))
+        queryset = filter_masters_by_specialization(queryset, self.request.query_params.get("specialization"))
         if status == "active":
-            queryset = queryset.filter(is_active=True, is_online=True, is_available=True)
+            queryset = queryset.filter(is_blocked=False, is_active=True, is_online=True, is_available=True)
         elif status == "busy":
-            queryset = queryset.filter(is_active=True, is_online=True, is_available=False)
+            queryset = queryset.filter(is_blocked=False, is_active=True, is_online=True, is_available=False)
         elif status == "inactive":
-            queryset = queryset.filter(is_active=True, is_online=False)
+            queryset = queryset.filter(is_blocked=False, is_active=True, is_online=False)
         elif status == "blocked":
-            queryset = queryset.filter(is_active=False)
+            queryset = queryset.filter(is_blocked=True)
         return queryset.order_by("-created_at")
 
 
@@ -503,7 +521,146 @@ class DashboardAvailableMastersAPIView(DashboardPermissionMixin, EnvelopeMixin, 
     serializer_class = DashboardMasterSerializer
 
     def get_queryset(self):
-        return Master.objects.filter(is_active=True, is_online=True, is_available=True).order_by("first_name")
+        return Master.objects.filter(
+            is_blocked=False, is_active=True, is_online=True, is_available=True
+        ).order_by("first_name")
+
+
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Bloklangan ustalar",
+    description="Bloklangan (is_blocked=True) ustalar ro'yxati. `search` va `specialization` bilan filtrlash mumkin.",
+    parameters=[
+        OpenApiParameter("search", str, OpenApiParameter.QUERY, required=False, description="Ism, familiya yoki telefon bo'yicha qidiruv."),
+        OpenApiParameter("specialization", str, OpenApiParameter.QUERY, required=False, description="Mutaxassislik bo'yicha filter."),
+    ],
+)
+class DashboardBlockedMasterListAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
+    serializer_class = DashboardMasterSerializer
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Master.objects.none()
+        queryset = Master.objects.filter(is_blocked=True)
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search) | Q(last_name__icontains=search) | Q(phone__icontains=search)
+            )
+        queryset = filter_masters_by_specialization(queryset, self.request.query_params.get("specialization"))
+        return queryset.order_by("-blocked_at", "-created_at")
+
+
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Ustani bloklash / blokdan chiqarish",
+    description="`is_blocked=true` ustani bloklaydi (kirishga ruxsat berilmaydi), `false` blokdan chiqaradi. `reason` ixtiyoriy.",
+)
+class DashboardMasterBlockAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = DashboardMasterBlockSerializer
+
+    def post(self, request, pk):
+        master = get_object_or_404(Master, pk=pk)
+        serializer = self.get_serializer(data=request.data, context={"master": master})
+        serializer.is_valid(raise_exception=True)
+        master = serializer.save()
+        return success_response(DashboardMasterSerializer(master, context={"request": request}).data)
+
+
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Masterdan naqd pul qabul qilish (ro'yxat)",
+    description="Ustalar topshirgan naqd pul so'rovlari. Default `status=pending`. `status` bilan filtrlash mumkin (pending/approved/rejected).",
+    parameters=[
+        OpenApiParameter("status", str, OpenApiParameter.QUERY, required=False, description="pending (default), approved yoki rejected."),
+    ],
+)
+class DashboardCashHandoverListAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
+    serializer_class = DashboardCashHandoverSerializer
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return WithdrawRequest.objects.none()
+        valid_statuses = {choice[0] for choice in WithdrawRequest.STATUSES}
+        status = self.request.query_params.get("status")
+        if status not in valid_statuses:
+            status = WithdrawRequest.PENDING
+        return WithdrawRequest.objects.filter(status=status).select_related("master").order_by("-created_at")
+
+
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Naqd pulni qabul qilish (tasdiqlash)",
+    description="Admin ustadan naqd pulni qabul qiladi: master naqd balansidan summa yechiladi va tranzaksiya yoziladi.",
+)
+class DashboardCashHandoverAcceptAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = EmptySerializer
+
+    def post(self, request, pk):
+        handover = get_object_or_404(WithdrawRequest, pk=pk)
+        accept_cash_handover(handover, note=request.data.get("note", ""))
+        return success_response(DashboardCashHandoverSerializer(handover, context={"request": request}).data)
+
+
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Naqd pul so'rovini rad etish",
+    description="Admin naqd topshirish so'rovini rad etadi (balans o'zgarmaydi).",
+)
+class DashboardCashHandoverRejectAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = EmptySerializer
+
+    def post(self, request, pk):
+        handover = get_object_or_404(WithdrawRequest, pk=pk)
+        reject_cash_handover(handover, note=request.data.get("note", ""))
+        return success_response(DashboardCashHandoverSerializer(handover, context={"request": request}).data)
+
+
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Master specializations",
+    description="Ustalar ro'yxatidagi specialization filter dropdowni uchun mavjud mutaxassisliklar va ular bo'yicha ustalar sonini qaytaradi.",
+)
+class DashboardMasterSpecializationsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = EmptySerializer
+
+    def get(self, request):
+        results = specialization_counts()
+        return success_response({"count": len(results), "results": results})
+
+
+@extend_schema(
+    tags=[DASHBOARD_MASTERS_TAG],
+    summary="Master applications (ariza qoldirgan / active bo'lmagan)",
+    description=(
+        "Ro'yxatdan o'tish arizasini qoldirgan, hali tasdiqlanmagan (active bo'lmagan) ustalar ro'yxati. "
+        "Default `approval_status=pending`. `approval_status` (pending/rejected/approved), `search` va "
+        "`specialization` bilan filtrlash mumkin."
+    ),
+    parameters=[
+        OpenApiParameter("approval_status", str, OpenApiParameter.QUERY, required=False, description="pending (default), rejected yoki approved."),
+        OpenApiParameter("search", str, OpenApiParameter.QUERY, required=False, description="Ism, familiya yoki telefon bo'yicha qidiruv."),
+        OpenApiParameter("specialization", str, OpenApiParameter.QUERY, required=False, description="Mutaxassislik bo'yicha filter (vergul bilan bir nechta)."),
+    ],
+)
+class DashboardMasterApplicationListAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListAPIView):
+    serializer_class = DashboardMasterApplicationSerializer
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Master.objects.none()
+        valid_statuses = {choice[0] for choice in MasterApprovalStatus.choices}
+        approval_status = self.request.query_params.get("approval_status")
+        if approval_status not in valid_statuses:
+            approval_status = MasterApprovalStatus.PENDING
+        queryset = Master.objects.filter(approval_status=approval_status)
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search) | Q(last_name__icontains=search) | Q(phone__icontains=search)
+            )
+        queryset = filter_masters_by_specialization(queryset, self.request.query_params.get("specialization"))
+        return queryset.order_by("-created_at")
 
 
 @extend_schema(
@@ -1372,7 +1529,10 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
     def get(self, request):
         rows = (
             SupportMessage.objects.values("client_id", "master_id")
-            .annotate(last_message_at=Max("created_at"), unread_count=Count("id", filter=Q(is_read=False)))
+            .annotate(
+                last_message_at=Max("created_at"),
+                unread_count=Count("id", filter=Q(is_read=False) & ~Q(sender_role="admin")),
+            )
             .order_by("-last_message_at")
         )
         threads = []
@@ -1383,15 +1543,21 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
                 .order_by("-created_at")
                 .first()
             )
+            unread_count = row["unread_count"]
+            has_unread = bool(unread_count)
             threads.append(
                 {
                     "client": DashboardClientMiniSerializer(last_message.client).data if last_message.client else None,
                     "master": DashboardMasterMiniSerializer(last_message.master).data if last_message.master else None,
                     "last_message": DashboardSupportMessageSerializer(last_message, context={"request": request}).data,
                     "last_message_at": row["last_message_at"],
-                    "unread_count": row["unread_count"],
+                    "unread_count": unread_count,
+                    "has_unread": has_unread,
+                    "status": "unread" if has_unread else "read",
                 }
             )
+        # Threads with new (unread) messages first, then most recent activity.
+        threads.sort(key=lambda thread: (thread["has_unread"], thread["last_message_at"]), reverse=True)
         return success_response({"count": len(threads), "results": threads})
 
 
@@ -1415,6 +1581,15 @@ class DashboardSupportMessageListCreateAPIView(DashboardPermissionMixin, Envelop
         if is_read is not None:
             queryset = queryset.filter(is_read=is_read)
         return queryset.order_by("created_at")
+
+    def list(self, request, *args, **kwargs):
+        # Opening a thread counts as the admin reading it: flip is_read on the
+        # participant's incoming messages before serializing the response.
+        client = request.query_params.get("client")
+        master = request.query_params.get("master")
+        if client or master:
+            mark_support_thread_read_by_admin(client_id=client or None, master_id=master or None)
+        return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(sender_role="admin")

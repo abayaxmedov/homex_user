@@ -48,6 +48,15 @@ class WithdrawRequest(TimeStampedUUIDModel):
         ordering = ("-created_at",)
 
 
+class CashHandover(WithdrawRequest):
+    """Proxy of :class:`WithdrawRequest` for the admin "accept cash from master" queue."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "Masterdan naqd pul"
+        verbose_name_plural = "Masterdan naqd pul qabul qilish"
+
+
 class MasterExpense(TimeStampedUUIDModel):
     master = models.ForeignKey("accounts.Master", on_delete=models.CASCADE, related_name="expenses")
     purpose = models.CharField(max_length=100)
