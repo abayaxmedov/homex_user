@@ -7,6 +7,7 @@ from rest_framework import generics
 from rest_framework.permissions import AllowAny
 
 from apps.accounts.permissions import IsClient
+from apps.common.filters import filter_by_category
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.market.models import MarketFavorite, MarketOrder, MarketProduct, MarketCategory
@@ -95,7 +96,15 @@ class MarketProductDetailView(EnvelopeMixin, generics.RetrieveAPIView):
         ).prefetch_related("images")
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Market"]), post=extend_schema(tags=["Client Market"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Market"],
+        parameters=[
+            OpenApiParameter("category", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Mahsulot kategoriyasi bo'yicha filter (id yoki slug)."),
+        ],
+    ),
+    post=extend_schema(tags=["Client Market"]),
+)
 class MarketOrderListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     permission_classes = [IsClient]
     serializer_class = MarketOrderSerializer
@@ -103,13 +112,25 @@ class MarketOrderListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return MarketOrder.objects.none()
-        return MarketOrder.objects.filter(client=self.request.user).select_related("product")
+        queryset = (
+            MarketOrder.objects.filter(client=self.request.user)
+            .select_related("product", "product__category")
+            .order_by("-created_at")
+        )
+        return filter_by_category(queryset, self.request, field="product__category")
 
     def perform_create(self, serializer):
         serializer.save(client=self.request.user)
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Market"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Market"],
+        parameters=[
+            OpenApiParameter("category", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Mahsulot kategoriyasi bo'yicha filter (id yoki slug)."),
+        ],
+    )
+)
 class MarketFavoriteListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [IsClient]
     serializer_class = MarketFavoriteSerializer
@@ -117,7 +138,10 @@ class MarketFavoriteListView(EnvelopeMixin, generics.ListAPIView):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return MarketFavorite.objects.none()
-        return MarketFavorite.objects.filter(client=self.request.user).select_related("product")
+        queryset = MarketFavorite.objects.filter(client=self.request.user).select_related(
+            "product", "product__category"
+        )
+        return filter_by_category(queryset, self.request, field="product__category")
 
 
 @extend_schema(tags=["Client Market"])

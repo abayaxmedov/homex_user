@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.filters import filter_masters_by_specialization
 from apps.accounts.models import Client, Master
+from apps.common.filters import filter_by_category
 from apps.common.responses import success_response
 from apps.orders.models import Order, OrderStatus
 from apps.orders.receipts import DOCX_CONTENT_TYPE, build_order_receipt_docx, order_receipt_filename
@@ -505,7 +506,12 @@ class ClientOrdersAPIView(InternalAPIViewMixin, generics.ListAPIView):
     serializer_class = InternalOrderSerializer
 
     def get_queryset(self):
-        return Order.objects.select_related("client", "master", "service").filter(client_id=self.kwargs["pk"]).order_by("-created_at")
+        queryset = (
+            Order.objects.select_related("client", "master", "service", "service__category")
+            .filter(client_id=self.kwargs["pk"])
+            .order_by("-created_at")
+        )
+        return filter_by_category(queryset, self.request, field="service__category")
 
 
 class ClientStatsAPIView(InternalAPIViewMixin, APIView):
@@ -698,17 +704,23 @@ class MasterOrdersAPIView(InternalAPIViewMixin, generics.ListAPIView):
     serializer_class = InternalOrderSerializer
 
     def get_queryset(self):
-        return Order.objects.select_related("client", "master", "service").filter(master_id=self.kwargs["pk"]).order_by("-created_at")
+        queryset = (
+            Order.objects.select_related("client", "master", "service", "service__category")
+            .filter(master_id=self.kwargs["pk"])
+            .order_by("-created_at")
+        )
+        return filter_by_category(queryset, self.request, field="service__category")
 
 
 class MasterScheduleAPIView(MasterOrdersAPIView):
     def get_queryset(self):
-        return (
-            Order.objects.select_related("client", "master", "service")
+        queryset = (
+            Order.objects.select_related("client", "master", "service", "service__category")
             .filter(master_id=self.kwargs["pk"])
             .exclude(status__in=[OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REJECTED])
             .order_by("scheduled_date", "scheduled_time", "created_at")
         )
+        return filter_by_category(queryset, self.request, field="service__category")
 
 
 class MasterIncomeAPIView(InternalAPIViewMixin, APIView):
@@ -878,7 +890,7 @@ class OrderCollectionAPIView(InternalAPIViewMixin, generics.ListCreateAPIView):
     write_serializer_class = InternalOrderWriteSerializer
 
     def get_queryset(self):
-        queryset = Order.objects.select_related("client", "master", "service").all()
+        queryset = Order.objects.select_related("client", "master", "service", "service__category").all()
         params = self.request.query_params
         if params.get("date_from"):
             queryset = queryset.filter(created_at__date__gte=params["date_from"])
@@ -890,6 +902,8 @@ class OrderCollectionAPIView(InternalAPIViewMixin, generics.ListCreateAPIView):
             queryset = queryset.filter(client_id=params["client_id"])
         if params.get("service_id"):
             queryset = queryset.filter(service_id=params["service_id"])
+        # Applied before the status branch below, which materialises the queryset into a list.
+        queryset = filter_by_category(queryset, self.request, field="service__category")
         if params.get("status"):
             wanted = params["status"]
             queryset = [order for order in queryset if dashboard_order_status(order) == wanted]
@@ -1042,7 +1056,8 @@ class OrderMetaAPIView(InternalAPIViewMixin, APIView):
 class OrderBoardAPIView(InternalAPIViewMixin, APIView):
     def get(self, request):
         limit = parse_limit(request, default=20)
-        queryset = Order.objects.select_related("client", "master", "service").all()
+        queryset = Order.objects.select_related("client", "master", "service", "service__category").all()
+        queryset = filter_by_category(queryset, request, field="service__category")
         columns = []
         labels = {
             "new": "Yangi",
@@ -1068,5 +1083,6 @@ class OrderBoardAPIView(InternalAPIViewMixin, APIView):
 
 class OrderExportAPIView(InternalAPIViewMixin, APIView):
     def get(self, request):
-        orders = Order.objects.select_related("client", "master", "service").all()
+        orders = Order.objects.select_related("client", "master", "service", "service__category").all()
+        orders = filter_by_category(orders, request, field="service__category")
         return success_response(InternalOrderSerializer(orders, many=True, context={"request": request}).data)

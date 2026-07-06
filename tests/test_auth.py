@@ -1,10 +1,28 @@
 from django.core.cache import cache
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Client, Master, MasterApprovalStatus, OTPRecord
 from apps.accounts.serializers import SendOTPSerializer, VerifyOTPSerializer
 from apps.accounts.tokens import issue_role_tokens
+
+
+def test_dashboard_login_works_with_stray_admin_session(django_admin_user):
+    # Reproduces the Swagger/browser case: already logged into /admin/ (session
+    # cookie present). Login must not fail with a SessionAuthentication CSRF 403.
+    api = APIClient()
+    assert api.login(username="admin", password="admin")  # sets a session cookie
+
+    response = api.post(
+        reverse("dashboard-auth-login"),
+        {"username": "admin", "password": "admin"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["data"]["access_token"]
+    assert response.data["data"]["user"]["role"] == "admin"
 
 
 def test_role_tokens_include_role(master, client_user):

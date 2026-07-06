@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from apps.accounts.filters import filter_masters_by_specialization, specialization_counts
 from apps.accounts.models import Client, Master, MasterApprovalStatus
 from apps.accounts.permissions import IsStaffOrAdminUser
+from apps.common.filters import filter_by_category
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.dashboard.models import (
@@ -28,13 +29,10 @@ from apps.notifications.services import broadcast_notification, send_push_notifi
 from apps.orders.models import Order, OrderStatus
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
-<<<<<<< HEAD
 from apps.support.models import SupportChat, SupportMessage
 from apps.support.services import attach_latest_support_messages, with_latest_support_message
-=======
 from apps.support.models import SupportMessage
 from apps.support.services import mark_support_thread_read_by_admin
->>>>>>> a32aee110d0d8458e02724342db3de8387b2d59a
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
 from apps.wallet.services import accept_cash_handover, reject_cash_handover
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
@@ -145,6 +143,9 @@ class DashboardPermissionMixin:
     ],
 )
 class DashboardLoginAPIView(generics.GenericAPIView):
+    # Public token endpoint: skip auth so a stray admin session cookie doesn't
+    # trigger SessionAuthentication's CSRF check.
+    authentication_classes = []
     permission_classes = [permissions.AllowAny]
     serializer_class = DashboardLoginSerializer
 
@@ -161,6 +162,7 @@ class DashboardLoginAPIView(generics.GenericAPIView):
     request=DashboardRefreshSerializer,
 )
 class DashboardRefreshAPIView(generics.GenericAPIView):
+    authentication_classes = []
     permission_classes = [permissions.AllowAny]
     serializer_class = DashboardRefreshSerializer
 
@@ -458,11 +460,12 @@ class DashboardClientOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, gene
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Order.objects.none()
-        return (
+        queryset = (
             Order.objects.filter(client_id=self.kwargs["pk"])
             .select_related("client", "master", "service", "service__category", "address", "tracking")
             .order_by("-created_at")
         )
+        return filter_by_category(queryset, self.request, field="service__category")
 
 
 @extend_schema(
@@ -711,11 +714,12 @@ class DashboardMasterOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, gene
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Order.objects.none()
-        return (
+        queryset = (
             Order.objects.filter(master_id=self.kwargs["pk"])
             .select_related("client", "master", "service", "service__category", "address", "tracking")
             .order_by("-created_at")
         )
+        return filter_by_category(queryset, self.request, field="service__category")
 
 
 @extend_schema(
@@ -757,6 +761,7 @@ class DashboardOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, g
             queryset = queryset.filter(master_id=master)
         if service:
             queryset = queryset.filter(service_id=service)
+        queryset = filter_by_category(queryset, self.request, field="service__category")
         if date_from:
             queryset = queryset.filter(created_at__date__gte=date_from)
         if date_to:
@@ -791,6 +796,7 @@ class DashboardOrderBoardAPIView(DashboardPermissionMixin, generics.GenericAPIVi
                 .select_related("client", "master", "service", "service__category", "address", "tracking")
                 .order_by("-created_at")
             )
+            queryset = filter_by_category(queryset, request, field="service__category")
             data.append(
                 {
                     "status": value,
@@ -1352,6 +1358,7 @@ class DashboardMarketOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMi
             queryset = queryset.filter(client_id=client)
         if product:
             queryset = queryset.filter(product_id=product)
+        queryset = filter_by_category(queryset, self.request, field="product__category")
         return queryset.order_by("-created_at")
 
 
@@ -1532,59 +1539,39 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
     serializer_class = EmptySerializer
 
     def get(self, request):
-<<<<<<< HEAD
-        chats = list(
-            with_latest_support_message(
-                SupportChat.objects.select_related("client", "master").annotate(
-                    unread_count=Count("messages", filter=Q(messages__is_read=False))
+        chats = (
+            SupportChat.objects.select_related("client", "master")
+            .annotate(
+                unread_count=Count(
+                    "messages",
+                    filter=Q(messages__is_read=False) & ~Q(messages__sender_role="admin"),
                 )
             )
-            .filter(last_message_id__isnull=False)
-            .order_by("-last_message_created_at")
+            .order_by("-updated_at")
         )
-        attach_latest_support_messages(chats)
         threads = []
         for chat in chats:
-            last_message = getattr(chat, "_last_message", None)
+            last_message = (
+                chat.messages.select_related("client", "master").order_by("-created_at").first()
+            )
             if not last_message:
                 continue
-=======
-        rows = (
-            SupportMessage.objects.values("client_id", "master_id")
-            .annotate(
-                last_message_at=Max("created_at"),
-                unread_count=Count("id", filter=Q(is_read=False) & ~Q(sender_role="admin")),
-            )
-            .order_by("-last_message_at")
-        )
-        threads = []
-        for row in rows:
-            last_message = (
-                SupportMessage.objects.filter(client_id=row["client_id"], master_id=row["master_id"])
-                .select_related("client", "master")
-                .order_by("-created_at")
-                .first()
-            )
-            unread_count = row["unread_count"]
-            has_unread = bool(unread_count)
->>>>>>> a32aee110d0d8458e02724342db3de8387b2d59a
+            has_unread = bool(chat.unread_count)
             threads.append(
                 {
+                    # chat_id -> WebSocket: ws/support/<chat_id>/
+                    "chat_id": str(chat.id),
+                    "participant_role": chat.participant_role,
                     "client": DashboardClientMiniSerializer(chat.client).data if chat.client else None,
                     "master": DashboardMasterMiniSerializer(chat.master).data if chat.master else None,
                     "last_message": DashboardSupportMessageSerializer(last_message, context={"request": request}).data,
-<<<<<<< HEAD
                     "last_message_at": last_message.created_at,
                     "unread_count": chat.unread_count,
-=======
-                    "last_message_at": row["last_message_at"],
-                    "unread_count": unread_count,
                     "has_unread": has_unread,
                     "status": "unread" if has_unread else "read",
->>>>>>> a32aee110d0d8458e02724342db3de8387b2d59a
                 }
             )
-        # Threads with new (unread) messages first, then most recent activity.
+        # Unread threads first, then most recent activity.
         threads.sort(key=lambda thread: (thread["has_unread"], thread["last_message_at"]), reverse=True)
         return success_response({"count": len(threads), "results": threads})
 
