@@ -12,6 +12,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.accounts.models import Master
 from apps.accounts.permissions import IsClient, IsMaster
 from apps.accounts.serializers import MasterSummarySerializer
+from apps.common.filters import filter_by_category
 from apps.common.geo import distance_km, eta_minutes
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
@@ -178,6 +179,13 @@ class MasterHomeStatsView(generics.GenericAPIView):
                 description="Orderlarni scheduled_date bo'yicha filter qiladi. Format: `YYYY-MM-DD`.",
                 required=False,
             ),
+            OpenApiParameter(
+                name="category",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Xizmat kategoriyasi bo'yicha filter (service kategoriyasi id yoki slug).",
+                required=False,
+            ),
         ],
     )
 )
@@ -198,6 +206,7 @@ class MasterOrderListView(EnvelopeMixin, generics.ListAPIView):
             queryset = queryset.filter(master=self.request.user, status=OrderStatus.COMPLETED)
         else:
             queryset = queryset.filter(master=self.request.user)
+        queryset = filter_by_category(queryset, self.request, field="service__category")
         date = self.request.query_params.get("date")
         return queryset.filter(scheduled_date=date) if date else queryset
 
@@ -598,7 +607,14 @@ class NearbyMasterListView(EnvelopeMixin, generics.ListAPIView):
                 OpenApiParameter.QUERY,
                 description="Qiymatlar: `new`, `accepted`, `in_progress`, `completed`, `cancelled`, `rejected`.",
                 required=False,
-            )
+            ),
+            OpenApiParameter(
+                "category",
+                OpenApiTypes.STR,
+                OpenApiParameter.QUERY,
+                description="Xizmat kategoriyasi bo'yicha filter (service kategoriyasi id yoki slug).",
+                required=False,
+            ),
         ],
     ),
     post=extend_schema(
@@ -618,7 +634,10 @@ class ClientOrderListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Order.objects.none()
-        queryset = Order.objects.filter(client=self.request.user).select_related("service", "master", "tracking")
+        queryset = Order.objects.filter(client=self.request.user).select_related(
+            "service", "service__category", "master", "tracking"
+        )
+        queryset = filter_by_category(queryset, self.request, field="service__category")
         status = self.request.query_params.get("status")
         return queryset.filter(status=status) if status else queryset
 

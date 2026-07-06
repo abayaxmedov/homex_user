@@ -1,0 +1,62 @@
+# Local development / WebSocket testing stack.
+# Runs the ASGI server (uvicorn) so /ws/ WebSocket routes work locally.
+# Production (docker-compose.yml) is NOT touched — this is a separate file.
+#
+#   docker compose -f docker-compose.local.yml up --build
+#
+# Then connect to:  ws://localhost:8000/ws/client/support/
+#   Header:  Authorization: Bearer <access_token>
+#   or query: ws://localhost:8000/ws/dashboard/support/?token=<access_token>
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: homex
+      POSTGRES_USER: homex
+      POSTGRES_PASSWORD: homex
+    ports:
+      - "5432:5432"
+    volumes:
+      - homex_local_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U homex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Run the shell explicitly so no exec bit is required on the mounted file.
+    entrypoint: ["sh", "/app/docker/entrypoint.local.sh"]
+    environment:
+      DJANGO_DEBUG: "1"
+      DJANGO_SECRET_KEY: "local-dev-secret-key-please-change-32bytes+"
+      DJANGO_ALLOWED_HOSTS: "*"
+      DATABASE_URL: "postgres://homex:homex@db:5432/homex"
+      REDIS_URL: "redis://redis:6379/0"
+      BACKEND_PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app          # live code reload
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  homex_local_pg:

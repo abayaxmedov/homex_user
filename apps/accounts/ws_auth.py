@@ -1,6 +1,7 @@
 import logging
 
 from channels.db import database_sync_to_async
+from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.accounts.models import Client, Master, MasterApprovalStatus
@@ -14,10 +15,15 @@ def get_role_user(token_value):
     try:
         token = AccessToken(token_value)
         role = token.get("role")
+        subject_id = token.get("sub")
+        # Dashboard uses role="admin" and a staff Django user.
+        if role == "admin":
+            user_model = get_user_model()
+            return user_model.objects.filter(id=subject_id, is_active=True, is_staff=True).first()
         model = Master if role == "master" else Client if role == "client" else None
         if not model:
             return None
-        queryset = model.objects.filter(id=token.get("sub"), is_active=True)
+        queryset = model.objects.filter(id=subject_id, is_active=True)
         if role == "master":
             queryset = queryset.filter(approval_status=MasterApprovalStatus.APPROVED)
         return queryset.first()
