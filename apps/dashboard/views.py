@@ -28,13 +28,10 @@ from apps.notifications.services import broadcast_notification, send_push_notifi
 from apps.orders.models import Order, OrderStatus
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
-<<<<<<< HEAD
-from apps.support.models import SupportChat, SupportMessage
-from apps.support.services import attach_latest_support_messages, with_latest_support_message
-=======
+
 from apps.support.models import SupportMessage
 from apps.support.services import mark_support_thread_read_by_admin
->>>>>>> a32aee110d0d8458e02724342db3de8387b2d59a
+
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
 from apps.wallet.services import accept_cash_handover, reject_cash_handover
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
@@ -1532,23 +1529,6 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
     serializer_class = EmptySerializer
 
     def get(self, request):
-<<<<<<< HEAD
-        chats = list(
-            with_latest_support_message(
-                SupportChat.objects.select_related("client", "master").annotate(
-                    unread_count=Count("messages", filter=Q(messages__is_read=False))
-                )
-            )
-            .filter(last_message_id__isnull=False)
-            .order_by("-last_message_created_at")
-        )
-        attach_latest_support_messages(chats)
-        threads = []
-        for chat in chats:
-            last_message = getattr(chat, "_last_message", None)
-            if not last_message:
-                continue
-=======
         rows = (
             SupportMessage.objects.values("client_id", "master_id")
             .annotate(
@@ -1567,21 +1547,15 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
             )
             unread_count = row["unread_count"]
             has_unread = bool(unread_count)
->>>>>>> a32aee110d0d8458e02724342db3de8387b2d59a
             threads.append(
                 {
-                    "client": DashboardClientMiniSerializer(chat.client).data if chat.client else None,
-                    "master": DashboardMasterMiniSerializer(chat.master).data if chat.master else None,
+                    "client": DashboardClientMiniSerializer(last_message.client).data if last_message.client else None,
+                    "master": DashboardMasterMiniSerializer(last_message.master).data if last_message.master else None,
                     "last_message": DashboardSupportMessageSerializer(last_message, context={"request": request}).data,
-<<<<<<< HEAD
-                    "last_message_at": last_message.created_at,
-                    "unread_count": chat.unread_count,
-=======
                     "last_message_at": row["last_message_at"],
                     "unread_count": unread_count,
                     "has_unread": has_unread,
                     "status": "unread" if has_unread else "read",
->>>>>>> a32aee110d0d8458e02724342db3de8387b2d59a
                 }
             )
         # Threads with new (unread) messages first, then most recent activity.
