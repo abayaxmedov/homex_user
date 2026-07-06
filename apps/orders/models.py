@@ -58,6 +58,9 @@ class Order(TimeStampedUUIDModel):
     address = models.ForeignKey(
         "profiles.ClientAddress", on_delete=models.SET_NULL, null=True, blank=True, related_name="orders"
     )
+    device = models.ForeignKey(
+        "profiles.ClientDevice", on_delete=models.SET_NULL, null=True, blank=True, related_name="orders"
+    )
     address_text = models.CharField(max_length=300)
     lat = models.DecimalField(max_digits=10, decimal_places=8)
     lng = models.DecimalField(max_digits=11, decimal_places=8)
@@ -85,6 +88,14 @@ class Order(TimeStampedUUIDModel):
 
     class Meta:
         ordering = ("-created_at",)
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        # Remember the status as loaded so post_save can detect transitions
+        # and broadcast them to the client's tracking socket.
+        instance._loaded_status = instance.status
+        return instance
 
     def recalculate_total(self):
         self.total_amount = max(self.service_fee + self.inventory_total - self.bonus_used, 0)

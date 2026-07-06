@@ -1,7 +1,9 @@
 from datetime import timedelta
 
+from django.db.models import Count
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from drf_spectacular.utils import OpenApiExample, extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
 
@@ -77,7 +79,18 @@ class ClientAddressDetailView(EnvelopeMixin, generics.RetrieveUpdateDestroyAPIVi
         return ClientAddress.objects.filter(client=self.request.user)
 
 
-@extend_schema_view(get=extend_schema(tags=["Client Devices"]), post=extend_schema(tags=["Client Devices"]))
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Client Devices"],
+        summary="Client qurilmalari (location bo'yicha filter)",
+        description="Client qurilmalari. `address_id` yoki `label` (Uy/Ish/...) bo'yicha location filtri qo'llanadi.",
+        parameters=[
+            OpenApiParameter("address_id", str, OpenApiParameter.QUERY, required=False, description="Location (ClientAddress) id bo'yicha filter."),
+            OpenApiParameter("label", str, OpenApiParameter.QUERY, required=False, description="Location label bo'yicha filter (masalan Uy, Ish)."),
+        ],
+    ),
+    post=extend_schema(tags=["Client Devices"]),
+)
 class ClientDeviceListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     permission_classes = [IsClient]
     serializer_class = ClientDeviceSerializer
@@ -85,12 +98,47 @@ class ClientDeviceListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return ClientDevice.objects.none()
-        queryset = ClientDevice.objects.filter(client=self.request.user).select_related("category", "address")
+        queryset = ClientDevice.objects.filter(client=self.request.user).select_related("address")
         address_id = self.request.query_params.get("address_id")
-        return queryset.filter(address_id=address_id) if address_id else queryset
+        if address_id:
+            queryset = queryset.filter(address_id=address_id)
+        label = self.request.query_params.get("label")
+        if label:
+            queryset = queryset.filter(address__label__icontains=label)
+        return queryset.order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save(client=self.request.user)
+
+
+@extend_schema(
+    tags=["Client Devices"],
+    summary="Qurilma locationlari",
+    description="Devices bo'limidagi location filtri uchun clientning manzillari va har biridagi qurilmalar soni.",
+)
+class ClientDeviceLocationsView(EnvelopeMixin, generics.GenericAPIView):
+    permission_classes = [IsClient]
+    serializer_class = ClientAddressSerializer
+
+    def get(self, request):
+        addresses = (
+            ClientAddress.objects.filter(client=request.user)
+            .annotate(device_count=Count("devices"))
+            .order_by("-is_default", "label")
+        )
+        results = [
+            {
+                "id": str(address.id),
+                "label": address.label,
+                "address_text": address.address_text,
+                "lat": str(address.lat),
+                "lng": str(address.lng),
+                "is_default": address.is_default,
+                "device_count": address.device_count,
+            }
+            for address in addresses
+        ]
+        return success_response({"count": len(results), "results": results})
 
 
 @extend_schema_view(
@@ -109,14 +157,34 @@ class ClientDeviceDetailView(EnvelopeMixin, generics.RetrieveUpdateDestroyAPIVie
         return ClientDevice.objects.filter(client=self.request.user)
 
 
-@extend_schema(tags=["Client Devices"])
+@extend_schema(
+    tags=["Client Devices"],
+    summary="Xizmat chaqirish (qurilmadan order)",
+    description=(
+        "Qurilma kartasidagi 'Xizmat chaqirish' tugmasi uchun. Order formasini oldindan to'ldirish uchun "
+        "qurilma va manzil ma'lumotlarini qaytaradi. Order `POST /client/orders/` ga `device=<id>` bilan yuboriladi."
+    ),
+)
 class ClientDeviceOrderView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = ClientDeviceSerializer
 
     def post(self, request, pk):
-        device = ClientDevice.objects.get(pk=pk, client=request.user)
-        return success_response({"device_id": device.id, "message": "Use /client/orders/ to create an order"})
+        device = get_object_or_404(ClientDevice, pk=pk, client=request.user)
+        address = device.address
+        return success_response(
+            {
+                "device": ClientDeviceSerializer(device, context={"request": request}).data,
+                "order_endpoint": "/api/v1/client/orders/",
+                "prefill": {
+                    "device": str(device.id),
+                    "address": str(address.id) if address else None,
+                    "address_text": address.address_text if address else None,
+                    "lat": str(address.lat) if address else None,
+                    "lng": str(address.lng) if address else None,
+                },
+            }
+        )
 
 
 @extend_schema_view(

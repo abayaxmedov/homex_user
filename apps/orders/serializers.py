@@ -10,6 +10,7 @@ from apps.integrations.adapters import PaymentClient
 from apps.orders.models import Order, OrderInventoryUsage, OrderStatus, OrderTracking, PaymentType, Review, ReviewPhoto
 from apps.orders.receipts import order_receipt_filename
 from apps.orders.tracking import ensure_tracking, tracking_state
+from apps.profiles.models import ClientAddress, ClientDevice
 from apps.services.serializers import ServiceSerializer
 from apps.wallet.models import MasterWallet, WalletTransaction
 from apps.warehouse.models import MasterInventory
@@ -90,6 +91,12 @@ class OrderSerializer(serializers.ModelSerializer):
     receipt_status = serializers.SerializerMethodField()
     receipt_download_url = serializers.SerializerMethodField()
     receipt_filename = serializers.SerializerMethodField()
+    device_detail = serializers.SerializerMethodField(help_text="Orderga bog'langan qurilma ma'lumoti.")
+    # Inline device capture: yangi qurilmani order bilan birga saqlash uchun (write-only).
+    device_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    device_model = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    device_image = serializers.ImageField(write_only=True, required=False, allow_null=True)
+    device_location_label = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Order
@@ -101,6 +108,12 @@ class OrderSerializer(serializers.ModelSerializer):
             "service",
             "service_detail",
             "address",
+            "device",
+            "device_detail",
+            "device_name",
+            "device_model",
+            "device_image",
+            "device_location_label",
             "address_text",
             "lat",
             "lng",
@@ -213,11 +226,65 @@ class OrderSerializer(serializers.ModelSerializer):
     def get_tracking_steps(self, obj):
         return self._tracking_state(obj)["steps"]
 
+    @extend_schema_field(serializers.DictField(allow_null=True))
+    def get_device_detail(self, obj):
+        if not obj.device_id:
+            return None
+        from apps.profiles.serializers import ClientDeviceSerializer
+
+        return ClientDeviceSerializer(obj.device, context=self.context).data
+
+    def _resolve_device(self, client, order, device, device_fields):
+        """Return the ClientDevice to attach to the order.
+
+        Priority: an existing ``device`` (must belong to the client), otherwise
+        a brand-new device built from the inline ``device_*`` fields and saved
+        at the order's location so it is available for future orders.
+        """
+        if device is not None:
+            if device.client_id != client.id:
+                raise serializers.ValidationError({"device": "Bu qurilma sizga tegishli emas."})
+            return device
+
+        name = (device_fields.get("device_name") or "").strip()
+        if not name:
+            return None
+
+        address = order.address
+        if address is None:
+            if order.lat is None or order.lng is None or not order.address_text:
+                raise serializers.ValidationError(
+                    {"device_name": "Qurilmani saqlash uchun manzil kerak (address yoki address_text + lat + lng)."}
+                )
+            address, _ = ClientAddress.objects.get_or_create(
+                client=client,
+                lat=order.lat,
+                lng=order.lng,
+                defaults={
+                    "label": (device_fields.get("device_location_label") or "").strip() or "Manzil",
+                    "address_text": order.address_text,
+                },
+            )
+
+        return ClientDevice.objects.create(
+            client=client,
+            name=name,
+            model=(device_fields.get("device_model") or "").strip(),
+            image=device_fields.get("device_image"),
+            address=address,
+        )
+
     def create(self, validated_data):
+        device = validated_data.pop("device", None)
+        device_fields = {
+            key: validated_data.pop(key, None)
+            for key in ("device_name", "device_model", "device_image", "device_location_label")
+        }
         service = validated_data["service"]
         validated_data["service_fee"] = service.base_price
         order = Order(**validated_data)
         order.recalculate_total()
+        order.device = self._resolve_device(validated_data["client"], order, device, device_fields)
         order.save()
         ensure_tracking(order)
         return order

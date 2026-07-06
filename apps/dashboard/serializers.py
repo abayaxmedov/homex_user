@@ -310,6 +310,72 @@ class DashboardClientSerializer(serializers.ModelSerializer):
         return order.created_at if order else None
 
 
+class DashboardCashHandoverSerializer(serializers.ModelSerializer):
+    """Master's cash handover request (Naqd topshirish) for admin review."""
+
+    master_detail = DashboardMasterMiniSerializer(source="master", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = WithdrawRequest
+        fields = (
+            "id",
+            "master",
+            "master_detail",
+            "amount",
+            "status",
+            "status_label",
+            "admin_note",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class DashboardMasterBlockSerializer(serializers.Serializer):
+    """Block or unblock a master (optionally with a reason)."""
+
+    is_blocked = serializers.BooleanField()
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+    def save(self, **kwargs):
+        master = self.context["master"]
+        if self.validated_data["is_blocked"]:
+            master.block(reason=self.validated_data.get("reason", ""))
+        else:
+            master.unblock()
+        master.save()
+        return master
+
+
+class DashboardMasterApplicationSerializer(serializers.ModelSerializer):
+    """Lean serializer for reviewing masters who left a registration application."""
+
+    full_name = serializers.CharField(read_only=True)
+    approval_status_label = serializers.CharField(source="get_approval_status_display", read_only=True)
+
+    class Meta:
+        model = Master
+        fields = (
+            "id",
+            "phone",
+            "first_name",
+            "last_name",
+            "full_name",
+            "specialization",
+            "avatar",
+            "language",
+            "approval_status",
+            "approval_status_label",
+            "approved_at",
+            "rejected_reason",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
 class DashboardMasterSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     status = serializers.SerializerMethodField(help_text="Dashboard status: active, busy, inactive, blocked.")
@@ -333,6 +399,9 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
             "status_label",
             "is_online",
             "is_available",
+            "is_blocked",
+            "blocked_at",
+            "block_reason",
             "lat",
             "lng",
             "last_location_at",
@@ -352,6 +421,7 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
             "rating",
             "status",
             "status_label",
+            "blocked_at",
             "last_location_at",
             "orders_count",
             "completed_orders_count",
@@ -363,7 +433,7 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField)
     def get_status(self, obj):
-        if not obj.is_active:
+        if obj.is_blocked or not obj.is_active:
             return "blocked"
         if obj.is_online and obj.is_available:
             return "active"
