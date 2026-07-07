@@ -2,16 +2,40 @@ from django.db import transaction
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
+from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
+
+
+class WarehouseCategorySerializer(serializers.ModelSerializer):
+    products_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = WarehouseCategory
+        fields = ("id", "name", "slug", "products_count")
 
 
 class WarehouseProductSerializer(serializers.ModelSerializer):
     is_low_stock = serializers.BooleanField(read_only=True)
     disabled = serializers.SerializerMethodField()
+    category_detail = WarehouseCategorySerializer(source="category", read_only=True)
+    stock_value = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
 
     class Meta:
         model = WarehouseProduct
-        fields = ("id", "name", "unit", "quantity", "low_threshold", "image", "is_low_stock", "disabled")
+        fields = (
+            "id",
+            "category",
+            "category_detail",
+            "name",
+            "unit",
+            "quantity",
+            "low_threshold",
+            "cost_price",
+            "sale_price",
+            "stock_value",
+            "image",
+            "is_low_stock",
+            "disabled",
+        )
 
     @extend_schema_field(serializers.BooleanField)
     def get_disabled(self, obj):

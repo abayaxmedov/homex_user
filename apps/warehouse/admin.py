@@ -1,14 +1,21 @@
 from django.contrib import admin
 
 from apps.common.admin_mixins import HomeXModelAdmin
-from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
+from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
+
+
+@admin.register(WarehouseCategory)
+class WarehouseCategoryAdmin(HomeXModelAdmin):
+    list_display = ("name", "slug")
+    search_fields = ("name", "slug")
+    prepopulated_fields = {"slug": ("name",)}
 
 
 @admin.register(WarehouseProduct)
 class WarehouseProductAdmin(HomeXModelAdmin):
-    list_display = ("name", "unit", "quantity", "low_threshold", "is_active")
+    list_display = ("name", "category", "unit", "quantity", "cost_price", "sale_price", "low_threshold", "is_active")
     search_fields = ("name",)
-    list_filter = ("is_active", "unit")
+    list_filter = ("is_active", "unit", "category")
 
 
 @admin.register(StockMovement)

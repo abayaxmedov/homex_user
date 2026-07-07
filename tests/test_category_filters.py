@@ -15,6 +15,7 @@ from django.utils import timezone
 from apps.market.models import MarketCategory, MarketOrder, MarketProduct
 from apps.orders.models import Order
 from apps.services.models import Service, ServiceCategory
+from apps.warehouse.models import MasterInventory, WarehouseCategory, WarehouseProduct
 
 
 def rows(response):
@@ -33,7 +34,7 @@ def service_categories(db):
 
 
 def make_order(client_user, service, master=None):
-    return Order.objects.create(
+    order = Order.objects.create(
         client=client_user,
         master=master,
         service=service,
@@ -43,6 +44,12 @@ def make_order(client_user, service, master=None):
         scheduled_date=timezone.localdate(),
         scheduled_time=time(10, 0),
     )
+    if master is not None:
+        # Masters now only see orders the admin assigned to them.
+        from apps.orders.models import OrderMaster
+
+        OrderMaster.objects.create(order=order, master=master, has_accepted=True)
+    return order
 
 
 @pytest.fixture
@@ -139,3 +146,64 @@ def test_client_services_search(client_api, service_categories):
     response = client_api.get(reverse("client-services"), {"search": "santex"})
     assert response.status_code == 200
     assert {c["slug"] for c in rows(response)} == {"santexnik"}
+
+
+# --- Warehouse (ombor) category ----------------------------------------------
+
+@pytest.fixture
+def warehouse_setup(db):
+    cat_a = WarehouseCategory.objects.create(name="Kabellar", slug="kabellar")
+    cat_b = WarehouseCategory.objects.create(name="Asboblar", slug="asboblar")
+    prod_a = WarehouseProduct.objects.create(category=cat_a, name="Kabel 2x1.5", quantity=100)
+    prod_b = WarehouseProduct.objects.create(category=cat_b, name="Perforator", quantity=10)
+    return {"cat_a": cat_a, "cat_b": cat_b, "prod_a": prod_a, "prod_b": prod_b}
+
+
+def test_admin_warehouse_category_list(admin_api, warehouse_setup):
+    response = admin_api.get(reverse("admin-warehouse-categories"))
+    assert response.status_code == 200
+    by_slug = {c["slug"]: c for c in rows(response)}
+    assert {"kabellar", "asboblar"} <= set(by_slug)
+    assert by_slug["kabellar"]["products_count"] == 1
+
+
+def test_admin_warehouse_products_filter_by_category(admin_api, warehouse_setup):
+    response = admin_api.get(reverse("admin-warehouse-products"), {"category": "kabellar"})
+    assert response.status_code == 200
+    assert {str(row["id"]) for row in rows(response)} == {str(warehouse_setup["prod_a"].id)}
+
+
+def test_dashboard_warehouse_category_list(admin_api, warehouse_setup):
+    response = admin_api.get(reverse("dashboard-warehouse-categories"))
+    assert response.status_code == 200
+    assert {"kabellar", "asboblar"} <= {c["slug"] for c in rows(response)}
+
+
+def test_dashboard_warehouse_products_filter_by_category(admin_api, warehouse_setup):
+    response = admin_api.get(reverse("dashboard-warehouse-products"), {"category": str(warehouse_setup["cat_b"].id)})
+    assert response.status_code == 200
+    result = rows(response)
+    assert {str(row["id"]) for row in result} == {str(warehouse_setup["prod_b"].id)}
+    # price fields exposed (Figma: Tannarx / Sotuv narxi columns)
+    row = result[0]
+    assert {"cost_price", "sale_price", "stock_value"} <= set(row)
+
+
+def test_dashboard_warehouse_stats_total_value(admin_api, warehouse_setup):
+    product = warehouse_setup["prod_a"]  # quantity 100
+    product.cost_price = 1000
+    product.save(update_fields=["cost_price"])
+
+    response = admin_api.get(reverse("dashboard-warehouse-stats"))
+    assert response.status_code == 200
+    data = response.data["data"]
+    assert float(data["total_value"]) == 100 * 1000  # prod_a only; prod_b cost 0
+
+
+def test_master_inventory_filter_by_category(master_api, master, warehouse_setup):
+    MasterInventory.objects.create(master=master, warehouse_product=warehouse_setup["prod_a"], quantity=5)
+    MasterInventory.objects.create(master=master, warehouse_product=warehouse_setup["prod_b"], quantity=3)
+
+    response = master_api.get(reverse("master-inventory"), {"category": "asboblar"})
+    assert response.status_code == 200
+    assert {row["product_name"] for row in rows(response)} == {"Perforator"}

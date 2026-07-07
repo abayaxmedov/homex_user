@@ -10,5 +10,6 @@ urlpatterns = [
         views.AdminUpdateInventoryView.as_view(),
         name="admin-master-inventory-detail",
     ),
+    path("warehouse/categories/", views.WarehouseCategoryListView.as_view(), name="admin-warehouse-categories"),
     path("warehouse/products/", views.WarehouseProductListView.as_view(), name="admin-warehouse-products"),
 ]

@@ -18,7 +18,7 @@ from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
-from apps.orders.models import HomeBanner, Order, OrderStatus, OrderTracking, Review
+from apps.orders.models import ACTIVE_ORDER_STATUSES, HomeBanner, Order, OrderMaster, OrderStatus, Review
 from apps.orders.receipts import DOCX_CONTENT_TYPE, build_order_receipt_docx, order_receipt_filename
 from apps.orders.serializers import (
     MasterLocationSerializer,
@@ -33,7 +33,12 @@ from apps.orders.serializers import (
     ReviewSerializer,
 )
 from apps.accounts.filters import filter_masters_by_specialization
-from apps.orders.tracking import broadcast_tracking, ensure_tracking, tracking_payload
+from apps.orders.tracking import (
+    broadcast_tracking,
+    ensure_tracking,
+    refresh_master_order_tracking,
+    tracking_payload,
+)
 from apps.services.models import ServiceCategory
 from apps.services.serializers import ServiceCategorySerializer
 from apps.wallet.models import MasterWallet
@@ -41,8 +46,9 @@ from apps.warehouse.models import MasterInventory
 
 
 ORDER_STATUS_TEXT = (
-    "`new` - Usta qidirilmoqda; `accepted` - Usta yo'lda; `in_progress` - Usta ishlamoqda; "
-    "`completed` - Usta ishni tugatgan; `cancelled` - client bekor qilgan; `rejected` - master rad qilgan."
+    "`new` - Usta qidirilmoqda (admin biriktiradi); `accepted` - usta qabul qildi; `on_way` - usta yo'lda; "
+    "`arrived` - usta yetib keldi; `completed` - usta ishni tugatgan; `cancelled` - client bekor qilgan; "
+    "`rejected` - master rad qilgan."
 )
 
 ORDER_CREATE_EXAMPLE = {
@@ -132,10 +138,12 @@ class MasterHomeStatsView(generics.GenericAPIView):
             "today_income": completed_today.aggregate(total=Sum("total_amount"))["total"] or 0,
             "today_orders": Order.objects.filter(master=request.user, scheduled_date=today).count(),
             "orders_count": Order.objects.filter(master=request.user).count(),
-            "new_orders_count": Order.objects.filter(status=OrderStatus.NEW, master__isnull=True).count(),
+            "new_orders_count": Order.objects.filter(
+                assigned_masters__master=request.user, status=OrderStatus.NEW
+            ).distinct().count(),
             "in_process_orders_count": Order.objects.filter(
-                master=request.user, status__in=[OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS]
-            ).count(),
+                assigned_masters__master=request.user, status__in=ACTIVE_ORDER_STATUSES
+            ).distinct().count(),
             "average_rating": Review.objects.filter(master=request.user).aggregate(avg=Avg("rating"))["avg"] or 0,
             "wallet": {
                 "balance_online": wallet.balance_online,
@@ -197,15 +205,19 @@ class MasterOrderListView(EnvelopeMixin, generics.ListAPIView):
         if getattr(self, "swagger_fake_view", False):
             return Order.objects.none()
         tab = self.request.query_params.get("tab")
-        queryset = Order.objects.select_related("service", "master", "client", "tracking")
+        # Master only sees orders the admin assigned to them (dashboard "Usta biriktirish").
+        queryset = (
+            Order.objects.filter(assigned_masters__master=self.request.user, assigned_masters__is_active=True)
+            .select_related("service", "service__category", "master", "client", "tracking")
+            .distinct()
+        )
         if tab in {"yangi", "new", "available"}:
-            queryset = queryset.filter(Q(master=self.request.user) | Q(master__isnull=True), status=OrderStatus.NEW)
+            # Assigned but not yet accepted by anyone.
+            queryset = queryset.filter(status=OrderStatus.NEW)
         elif tab in {"joriy", "in_process"}:
-            queryset = queryset.filter(master=self.request.user, status__in=[OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS])
+            queryset = queryset.filter(status__in=ACTIVE_ORDER_STATUSES)
         elif tab in {"completed", "bajarilgan"}:
-            queryset = queryset.filter(master=self.request.user, status=OrderStatus.COMPLETED)
-        else:
-            queryset = queryset.filter(master=self.request.user)
+            queryset = queryset.filter(status=OrderStatus.COMPLETED)
         queryset = filter_by_category(queryset, self.request, field="service__category")
         date = self.request.query_params.get("date")
         return queryset.filter(scheduled_date=date) if date else queryset
@@ -220,26 +232,73 @@ class MasterOrderDetailView(EnvelopeMixin, generics.RetrieveAPIView):
         if getattr(self, "swagger_fake_view", False):
             return Order.objects.none()
         return Order.objects.filter(
-            Q(master=self.request.user) | Q(master__isnull=True, status=OrderStatus.NEW)
-        ).select_related("service", "client", "master", "tracking")
+            Q(assigned_masters__master=self.request.user) | Q(master=self.request.user)
+        ).select_related("service", "client", "master", "tracking").distinct()
 
 
-@extend_schema(tags=["Master Orders"])
+@extend_schema(
+    tags=["Master Orders"],
+    summary="Orderni qabul qilish",
+    description=(
+        "Admin biriktirgan usta orderni qabul qiladi. Birinchi qabul qilgan usta 'asosiy' (lead) bo'ladi va "
+        "tracking shu usta uchun ishlaydi. Status `new` -> `accepted`."
+    ),
+)
 class MasterOrderAcceptView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = OrderSerializer
 
     def post(self, request, pk):
-        order = get_object_or_404(Order, Q(master=request.user) | Q(master__isnull=True), pk=pk, status=OrderStatus.NEW)
-        order.master = request.user
-        order.status = OrderStatus.ACCEPTED
-        order.save(update_fields=["master", "status", "updated_at"])
+        # Only a master the admin assigned to this order may accept it.
+        assignment = get_object_or_404(
+            OrderMaster.objects.select_related("order", "order__client"),
+            order_id=pk,
+            master=request.user,
+            is_active=True,
+        )
+        order = assignment.order
+        if order.status == OrderStatus.NEW:
+            order.master = request.user  # first to accept becomes the lead master
+            order.status = OrderStatus.ACCEPTED
+            order.save(update_fields=["master", "status", "updated_at"])
+            ensure_tracking(order)
+            create_notification(
+                role="client",
+                client=order.client,
+                title="Buyurtma qabul qilindi",
+                body=f"{request.user.full_name} buyurtmangizni qabul qildi",
+                data={"order_id": str(order.id), "status": order.status},
+            )
+            # Status broadcast is handled centrally by the Order post_save signal.
+        if not assignment.has_accepted:
+            assignment.has_accepted = True
+            assignment.save(update_fields=["has_accepted", "updated_at"])
+        return success_response(OrderSerializer(order).data)
+
+
+@extend_schema(
+    tags=["Master Orders"],
+    summary="Usta yo'lga chiqdi",
+    description="Lead usta yo'lga chiqqanini bildiradi. Status `accepted` -> `on_way`. Client tracking socketiga yuboriladi.",
+    request=None,
+    responses=OrderSerializer,
+)
+class MasterOrderOnWayView(generics.GenericAPIView):
+    permission_classes = [IsMaster]
+    serializer_class = OrderSerializer
+
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, master=request.user)
+        if order.status != OrderStatus.ACCEPTED:
+            raise ValidationError({"status": "Order faqat 'accepted' holatidan 'on_way' holatiga o'tadi"})
+        order.status = OrderStatus.ON_WAY
+        order.save(update_fields=["status", "updated_at"])
         ensure_tracking(order)
         create_notification(
             role="client",
             client=order.client,
-            title="Buyurtma qabul qilindi",
-            body=f"{request.user.full_name} buyurtmangizni qabul qildi",
+            title="Usta yo'lda",
+            body="Usta buyurtma manziliga yo'lga chiqdi",
             data={"order_id": str(order.id), "status": order.status},
         )
         # Status broadcast is handled centrally by the Order post_save signal.
@@ -248,16 +307,16 @@ class MasterOrderAcceptView(generics.GenericAPIView):
 
 @extend_schema(
     tags=["Master Orders"],
-    summary="Order ishini boshlash",
+    summary="Usta yetib keldi",
     description=(
-        "Master obyektga yetib borgach order statusini `in_progress` qiladi va client tracking socketiga yuboradi. "
-        "Multipart request bilan `before_photo` optional yuboriladi."
+        "Lead usta manzilga yetib borgach order statusini `arrived` qiladi va client tracking socketiga yuboradi. "
+        "Status `on_way` -> `arrived`. Multipart request bilan `before_photo` optional yuboriladi."
     ),
     request=OrderStartSerializer,
     responses=OrderSerializer,
     examples=[
         OpenApiExample(
-            "Start order multipart fields",
+            "Arrived multipart fields",
             value={"before_photo": "file"},
             request_only=True,
         )
@@ -269,17 +328,17 @@ class MasterOrderStartView(generics.GenericAPIView):
 
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, master=request.user)
-        was_in_progress = order.status == OrderStatus.IN_PROGRESS
+        was_arrived = order.status == OrderStatus.ARRIVED
         serializer = self.get_serializer(data=request.data, context={"order": order})
         serializer.is_valid(raise_exception=True)
         order = serializer.save()
         ensure_tracking(order)
-        if not was_in_progress:
+        if not was_arrived:
             create_notification(
                 role="client",
                 client=order.client,
-                title="Usta ishni boshladi",
-                body="Usta buyurtma bo'yicha ishni boshladi",
+                title="Usta yetib keldi",
+                body="Usta buyurtma manziliga yetib keldi",
                 data={"order_id": str(order.id), "status": order.status},
             )
             # Status broadcast is handled centrally by the Order post_save signal.
@@ -451,25 +510,21 @@ class MasterLocationUpdateView(generics.GenericAPIView):
         }
         order_id = data.get("order_id")
         if order_id:
-            order = get_object_or_404(Order, pk=order_id, master=request.user)
-            master_distance = data.get("distance_km") or distance_km(data["lat"], data["lng"], order.lat, order.lng)
-            master_eta = data.get("eta_minutes") or eta_minutes(master_distance)
-            tracking, _ = OrderTracking.objects.update_or_create(
-                order=order,
-                defaults={
-                    "master_lat": data["lat"],
-                    "master_lng": data["lng"],
-                    "distance_km": master_distance,
-                    "eta_minutes": master_eta,
-                    "raw_payload": {key: str(value) for key, value in request.data.items()},
-                },
-            )
-            response["tracking"] = tracking_payload(order)
-            broadcast_tracking(
-                order,
-                tracking_payload(order),
-                event_type="master.location",
-            )
+            # Keep the explicit-order contract: a foreign/unknown order is a 404.
+            get_object_or_404(Order, pk=order_id, master=request.user)
+        updates = refresh_master_order_tracking(
+            request.user,
+            data["lat"],
+            data["lng"],
+            order_id=order_id,
+            distance_hint=data.get("distance_km"),
+            eta_hint=data.get("eta_minutes"),
+            raw_payload={key: str(value) for key, value in request.data.items()},
+        )
+        if order_id and updates:
+            response["tracking"] = updates[0][1]
+        for order, order_payload in updates:
+            broadcast_tracking(order, order_payload, event_type="master.location")
         return success_response(response)
 
     patch = post
@@ -605,7 +660,7 @@ class NearbyMasterListView(EnvelopeMixin, generics.ListAPIView):
                 "status",
                 OpenApiTypes.STR,
                 OpenApiParameter.QUERY,
-                description="Qiymatlar: `new`, `accepted`, `in_progress`, `completed`, `cancelled`, `rejected`.",
+                description="Qiymatlar: `new`, `accepted`, `on_way`, `arrived`, `completed`, `cancelled`, `rejected`.",
                 required=False,
             ),
             OpenApiParameter(

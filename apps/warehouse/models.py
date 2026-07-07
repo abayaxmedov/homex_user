@@ -3,17 +3,40 @@ from django.db import models
 from apps.common.models import TimeStampedUUIDModel
 
 
+class WarehouseCategory(TimeStampedUUIDModel):
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(unique=True)
+
+    class Meta:
+        ordering = ("name",)
+        verbose_name = "Warehouse category"
+        verbose_name_plural = "Warehouse categories"
+
+    def __str__(self):
+        return self.name
+
+
 class WarehouseProduct(TimeStampedUUIDModel):
+    category = models.ForeignKey(
+        WarehouseCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name="products"
+    )
     name = models.CharField(max_length=180)
     unit = models.CharField(max_length=20, default="dona")
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     low_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cost_price = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sale_price = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     image = models.ImageField(upload_to="warehouse/products/", null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     @property
     def is_low_stock(self):
         return self.quantity <= self.low_threshold
+
+    @property
+    def stock_value(self):
+        """Tannarx bo'yicha ombordagi qoldiq qiymati (Ombor qiymati kartasi uchun)."""
+        return self.cost_price * self.quantity
 
     def __str__(self):
         return self.name

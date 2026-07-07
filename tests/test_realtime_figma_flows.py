@@ -17,11 +17,12 @@ from apps.notifications.models import Notification
 from apps.notifications.services import create_notification, notification_group
 
 from apps.orders.consumers import ClientTrackingConsumer
-from apps.orders.models import Order, OrderStatus, OrderTracking
+from apps.orders.models import HomeBanner, Order, OrderStatus, OrderTracking
 from apps.orders.tracking import tracking_group
 from apps.support.consumers import serialize_history, ws_json_dumps
 from apps.support.models import SupportChat, SupportMessage
 from apps.support.services import (
+    broadcast_support_message,
     create_support_message,
     get_or_create_support_chat,
     mark_chat_read_by_admin,
@@ -43,8 +44,29 @@ def make_order(client_user, service, **kwargs):
     return Order.objects.create(**defaults)
 
 
-def test_master_sees_and_accepts_unassigned_order(master_api, master, client_user, service):
+def assign_master(order, master):
+    """Simulate the admin assigning a master to an order (dashboard 'Usta biriktirish')."""
+    from apps.orders.models import OrderMaster
+
+    return OrderMaster.objects.create(order=order, master=master)
+
+
+def test_master_only_sees_assigned_orders(master_api, master, client_user, service):
+    unassigned = make_order(client_user, service)
+    assigned = make_order(client_user, service)
+    assign_master(assigned, master)
+
+    response = master_api.get(reverse("master-orders"))
+
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.data["results"]}
+    assert str(assigned.id) in ids
+    assert str(unassigned.id) not in ids  # not assigned to this master
+
+
+def test_master_accepts_assigned_order(master_api, master, client_user, service):
     order = make_order(client_user, service)
+    assign_master(order, master)  # admin assigns
 
     list_response = master_api.get(reverse("master-orders"), {"tab": "yangi"})
     accept_response = master_api.post(reverse("master-order-accept", args=[order.id]))
@@ -52,12 +74,23 @@ def test_master_sees_and_accepts_unassigned_order(master_api, master, client_use
     order.refresh_from_db()
 
     assert list_response.status_code == 200
-    assert OrderTracking.objects.filter(order=order).exists()
     assert str(order.id) in {item["id"] for item in list_response.data["results"]}
     assert accept_response.status_code == 200
-    assert order.master == master
+    assert OrderTracking.objects.filter(order=order).exists()
+    assert order.master == master  # first to accept becomes the lead
     assert order.status == OrderStatus.ACCEPTED
+    assert order.assigned_masters.get(master=master).has_accepted is True
     assert Notification.objects.filter(client=client_user, data__order_id=str(order.id)).exists()
+
+
+def test_master_cannot_accept_unassigned_order(master_api, master, client_user, service):
+    order = make_order(client_user, service)  # no assignment
+
+    response = master_api.post(reverse("master-order-accept", args=[order.id]))
+
+    assert response.status_code == 404
+    order.refresh_from_db()
+    assert order.status == OrderStatus.NEW
 
 
 def test_client_order_create_opens_tracking_and_status_flow(client_api, master_api, master, client_user, service):
@@ -75,11 +108,14 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
         format="json",
     )
     order = Order.objects.get(client=client_user)
+    assign_master(order, master)  # admin assigns the order to the master
     search_track = client_api.get(reverse("client-order-track", args=[order.id]))
     accept_response = master_api.post(reverse("master-order-accept", args=[order.id]))
     accepted_track = client_api.get(reverse("client-order-track", args=[order.id]))
-    start_response = master_api.post(reverse("master-order-start", args=[order.id]))
-    working_track = client_api.get(reverse("client-order-track", args=[order.id]))
+    on_way_response = master_api.post(reverse("master-order-on-way", args=[order.id]))
+    on_way_track = client_api.get(reverse("client-order-track", args=[order.id]))
+    arrived_response = master_api.post(reverse("master-order-arrived", args=[order.id]))
+    arrived_track = client_api.get(reverse("client-order-track", args=[order.id]))
     complete_response = master_api.post(
         reverse("master-order-complete", args=[order.id]),
         {"service_fee": "100000.00", "payment_type": "cash"},
@@ -92,13 +128,16 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
     assert search_track.data["data"]["tracking_status"] == "searching_master"
     assert search_track.data["data"]["tracking_status_label"] == "Usta qidirilmoqda"
     assert accept_response.status_code == 200
-    assert accepted_track.data["data"]["tracking_status"] == "master_on_way"
-    assert accepted_track.data["data"]["tracking_status_label"] == "Usta yo'lda"
+    assert accepted_track.data["data"]["tracking_status"] == "master_accepted"
+    assert accepted_track.data["data"]["tracking_status_label"] == "Usta qabul qildi"
     assert accepted_track.data["data"]["master_contact"]["phone_number"] == master.phone
     assert "chat" not in accepted_track.data["data"]["websocket"]
-    assert start_response.status_code == 200
-    assert working_track.data["data"]["tracking_status"] == "master_working"
-    assert working_track.data["data"]["tracking_status_label"] == "Usta ishlamoqda"
+    assert on_way_response.status_code == 200
+    assert on_way_track.data["data"]["tracking_status"] == "master_on_way"
+    assert on_way_track.data["data"]["tracking_status_label"] == "Usta yo'lda"
+    assert arrived_response.status_code == 200
+    assert arrived_track.data["data"]["tracking_status"] == "master_arrived"
+    assert arrived_track.data["data"]["tracking_status_label"] == "Usta yetib keldi"
     assert complete_response.status_code == 200
     assert completed_track.data["data"]["tracking_status"] == "master_finished"
     assert completed_track.data["data"]["tracking_status_label"] == "Usta ishni tugatgan"
@@ -107,6 +146,7 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
 
 def test_tracking_socket_receives_status_on_master_accept(master_api, master, client_user, service):
     order = make_order(client_user, service)
+    assign_master(order, master)
     channel_layer = get_channel_layer()
     channel_name = async_to_sync(channel_layer.new_channel)()
     async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
@@ -117,19 +157,22 @@ def test_tracking_socket_receives_status_on_master_accept(master_api, master, cl
     assert response.status_code == 200
     assert event["type"] == "tracking.update"
     assert event["payload"]["status"] == OrderStatus.ACCEPTED
-    assert event["payload"]["tracking_status"] == "master_on_way"
+    assert event["payload"]["tracking_status"] == "master_accepted"
 
 
 def test_tracking_socket_receives_full_status_flow(master_api, master, client_user, service):
     order = make_order(client_user, service)
+    assign_master(order, master)
     channel_layer = get_channel_layer()
     channel_name = async_to_sync(channel_layer.new_channel)()
     async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
 
     master_api.post(reverse("master-order-accept", args=[order.id]))
     accepted = async_to_sync(channel_layer.receive)(channel_name)
-    master_api.post(reverse("master-order-start", args=[order.id]))
-    started = async_to_sync(channel_layer.receive)(channel_name)
+    master_api.post(reverse("master-order-on-way", args=[order.id]))
+    on_way = async_to_sync(channel_layer.receive)(channel_name)
+    master_api.post(reverse("master-order-arrived", args=[order.id]))
+    arrived = async_to_sync(channel_layer.receive)(channel_name)
     master_api.post(
         reverse("master-order-complete", args=[order.id]),
         {"service_fee": "100000.00", "payment_type": "cash"},
@@ -138,19 +181,22 @@ def test_tracking_socket_receives_full_status_flow(master_api, master, client_us
     completed = async_to_sync(channel_layer.receive)(channel_name)
 
     # Every transition reaches the tracking socket with a distinct status.
-    assert accepted["payload"]["tracking_status"] == "master_on_way"
-    assert started["payload"]["tracking_status"] == "master_working"
+    assert accepted["payload"]["tracking_status"] == "master_accepted"
+    assert on_way["payload"]["tracking_status"] == "master_on_way"
+    assert arrived["payload"]["tracking_status"] == "master_arrived"
     assert completed["payload"]["tracking_status"] == "master_finished"
-    assert [accepted["payload"]["status"], started["payload"]["status"], completed["payload"]["status"]] == [
-        OrderStatus.ACCEPTED,
-        OrderStatus.IN_PROGRESS,
-        OrderStatus.COMPLETED,
-    ]
+    assert [
+        accepted["payload"]["status"],
+        on_way["payload"]["status"],
+        arrived["payload"]["status"],
+        completed["payload"]["status"],
+    ] == [OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED, OrderStatus.COMPLETED]
 
 
-def test_tracking_socket_receives_status_on_dashboard_assign(admin_api, master, client_user, service):
-    # The dashboard "assign master" flow previously changed status without ever
-    # notifying the tracking socket; the centralized signal now covers it.
+def test_dashboard_assign_masters_notifies_without_status_change(admin_api, master, client_user, service):
+    # Admin assigning masters does NOT accept the order — it stays `new` until a
+    # master accepts. So it creates the assignment + notifies the master, and does
+    # NOT emit a tracking status event.
     order = make_order(client_user, service)
     channel_layer = get_channel_layer()
     channel_name = async_to_sync(channel_layer.new_channel)()
@@ -158,14 +204,21 @@ def test_tracking_socket_receives_status_on_dashboard_assign(admin_api, master, 
 
     response = admin_api.patch(
         reverse("dashboard-order-assign", args=[order.id]),
-        {"master": str(master.id)},
+        {"masters": [str(master.id)]},
         format="json",
     )
-    event = async_to_sync(channel_layer.receive)(channel_name)
 
+    order.refresh_from_db()
     assert response.status_code == 200
-    assert event["payload"]["status"] == OrderStatus.ACCEPTED
-    assert event["payload"]["tracking_status"] == "master_on_way"
+    assert order.status == OrderStatus.NEW  # not accepted yet
+    assert order.assigned_masters.filter(master=master, is_active=True).exists()
+    assert Notification.objects.filter(master=master, data__order_id=str(order.id)).exists()
+
+    async def _expect_empty():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(channel_layer.receive(channel_name), timeout=0.2)
+
+    async_to_sync(_expect_empty)()
 
 
 def test_tracking_socket_silent_without_status_change(master, client_user, service):
@@ -272,7 +325,7 @@ def test_tracking_location_update_and_client_track_payload(master_api, client_ap
     assert track_response.status_code == 200
     assert track_response.data["data"]["master_location"]["lat"] == tracking.master_lat
     assert track_response.data["data"]["distance_km"] is not None
-    assert track_response.data["data"]["tracking_status"] == "master_on_way"
+    assert track_response.data["data"]["tracking_status"] == "master_accepted"
     assert track_response.data["data"]["master_contact"]["phone_number"] == master.phone
 
 

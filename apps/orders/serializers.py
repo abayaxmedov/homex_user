@@ -164,7 +164,7 @@ class OrderSerializer(serializers.ModelSerializer):
         )
         extra_kwargs = {
             "status": {
-                "help_text": "`new`, `accepted`, `in_progress`, `completed`, `cancelled`, `rejected`."
+                "help_text": "`new`, `accepted`, `on_way`, `arrived`, `completed`, `cancelled`, `rejected`."
             },
             "payment_type": {"help_text": "`cash`, `online`, `card`, `plastic`."},
             "bonus_used": {"help_text": "Client ishlatgan bonus summa. Totaldan ayriladi."},
@@ -173,7 +173,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.BooleanField)
     def get_can_cancel(self, obj):
-        return obj.status in {OrderStatus.NEW, OrderStatus.ACCEPTED}
+        return obj.status in {OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.ON_WAY}
 
     @extend_schema_field(serializers.BooleanField)
     def get_can_rate(self, obj):
@@ -306,17 +306,17 @@ class OrderStartSerializer(serializers.Serializer):
         order = self.context["order"]
         before_photo = self.validated_data.get("before_photo")
 
-        if order.status == OrderStatus.IN_PROGRESS:
+        if order.status == OrderStatus.ARRIVED:
             if before_photo:
                 order.before_photo = before_photo
                 order.save(update_fields=["before_photo", "updated_at"])
             return order
 
-        if order.status != OrderStatus.ACCEPTED:
-            raise serializers.ValidationError({"status": "Order faqat accepted holatidan in_progress holatiga o'tadi"})
+        if order.status != OrderStatus.ON_WAY:
+            raise serializers.ValidationError({"status": "Order faqat 'on_way' holatidan 'arrived' holatiga o'tadi"})
 
         update_fields = ["status", "updated_at"]
-        order.status = OrderStatus.IN_PROGRESS
+        order.status = OrderStatus.ARRIVED
         if before_photo:
             order.before_photo = before_photo
             update_fields.append("before_photo")

@@ -271,8 +271,8 @@ def get_weekly_orders(target_date):
         .annotate(
             total=Count("id"),
             new=Count("id", filter=Q(status=OrderStatus.NEW)),
-            on_way=Count("id", filter=Q(status=OrderStatus.ACCEPTED)),
-            in_progress=Count("id", filter=Q(status=OrderStatus.IN_PROGRESS)),
+            on_way=Count("id", filter=Q(status=OrderStatus.ON_WAY)),
+            in_progress=Count("id", filter=Q(status__in=[OrderStatus.ACCEPTED, OrderStatus.ARRIVED])),
             completed=Count("id", filter=Q(status=OrderStatus.COMPLETED)),
             cancelled=Count("id", filter=Q(status__in=[OrderStatus.CANCELLED, OrderStatus.REJECTED])),
         )
@@ -414,7 +414,7 @@ class DashboardTodayOrdersAPIView(InternalAPIViewMixin, generics.ListAPIView):
             Order.objects.select_related("client", "master", "service")
             .filter(
                 created_at__date=target_date,
-                status__in=[OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS],
+                status__in=[OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED],
             )
             .order_by("-created_at")
         )
@@ -428,7 +428,7 @@ class DashboardOverviewAPIView(InternalAPIViewMixin, APIView):
         date_from = target_date - timedelta(days=6)
         today_orders = (
             Order.objects.select_related("client", "master", "service")
-            .filter(created_at__date=target_date, status__in=[OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS])
+            .filter(created_at__date=target_date, status__in=[OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED])
             .order_by("-created_at")[:orders_limit]
         )
         data = {

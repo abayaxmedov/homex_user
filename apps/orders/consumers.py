@@ -1,13 +1,22 @@
 import json
+import logging
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 
-from apps.common.geo import distance_km, eta_minutes, to_decimal
-from apps.orders.models import Order, OrderTracking
-from apps.orders.tracking import ensure_tracking, tracking_group, tracking_payload
+from apps.common.geo import to_decimal
+from apps.orders.models import Order
+from apps.orders.tracking import (
+    ensure_tracking,
+    refresh_master_order_tracking,
+    tracking_group,
+    tracking_payload,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 @database_sync_to_async
@@ -26,6 +35,13 @@ def client_tracking_snapshot(user, order_id):
 
 @database_sync_to_async
 def persist_master_location(master, payload):
+    """Save the master's location and prepare tracking broadcasts.
+
+    Returns ``None`` when lat/lng is missing/invalid or an explicit order_id
+    does not belong to this master. Otherwise returns the ack for the master
+    plus one broadcast per affected order (all active orders when the app
+    streams bare lat/lng without an order_id).
+    """
     lat = to_decimal(payload.get("lat"))
     lng = to_decimal(payload.get("lng"))
     if lat is None or lng is None:
@@ -38,36 +54,32 @@ def persist_master_location(master, payload):
     master.save(update_fields=["lat", "lng", "last_location_at", "is_online", "updated_at"])
 
     order_id = payload.get("order_id")
-    if not order_id:
-        return {
+    updates = refresh_master_order_tracking(
+        master,
+        lat,
+        lng,
+        order_id=order_id,
+        distance_hint=payload.get("distance_km"),
+        eta_hint=payload.get("eta_minutes"),
+        raw_payload=payload,
+    )
+    if order_id and not updates:
+        return None
+
+    if order_id:
+        ack = updates[0][1]
+    else:
+        ack = {
             "lat": str(lat),
             "lng": str(lng),
             "distance_km": payload.get("distance_km"),
             "eta_minutes": payload.get("eta_minutes"),
+            "orders_notified": len(updates),
         }
-
-    order = Order.objects.filter(id=order_id, master=master).first()
-    if not order:
-        return None
-
-    calculated_distance = payload.get("distance_km")
-    if calculated_distance in (None, ""):
-        calculated_distance = distance_km(lat, lng, order.lat, order.lng)
-    calculated_eta = payload.get("eta_minutes")
-    if calculated_eta in (None, ""):
-        calculated_eta = eta_minutes(calculated_distance)
-
-    tracking, _ = OrderTracking.objects.update_or_create(
-        order=order,
-        defaults={
-            "master_lat": lat,
-            "master_lng": lng,
-            "distance_km": calculated_distance,
-            "eta_minutes": calculated_eta,
-            "raw_payload": payload,
-        },
-    )
-    return tracking_payload(order)
+    return {
+        "ack": ack,
+        "broadcasts": [(tracking_group(order.id), order_payload) for order, order_payload in updates],
+    }
 
 
 class MasterTrackingConsumer(AsyncWebsocketConsumer):
@@ -85,17 +97,27 @@ class MasterTrackingConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def receive(self, text_data=None, bytes_data=None):
-        payload = json.loads(text_data or "{}")
-        location = await persist_master_location(self.scope["user"], payload)
-        if not location:
+        # A bad frame must not kill the socket (same policy as the support chat).
+        try:
+            payload = json.loads(text_data or "{}")
+        except Exception:
+            logger.warning("Invalid master tracking WebSocket payload received", exc_info=True)
+            await self.send(text_data=json.dumps({"type": "error", "detail": "invalid JSON payload"}))
             return
-        order_id = payload.get("order_id")
-        if order_id:
-            await self.channel_layer.group_send(
-                tracking_group(order_id),
-                {"type": "tracking.update", "event": "master.location", "payload": location},
+        result = await persist_master_location(self.scope["user"], payload)
+        if not result:
+            await self.send(
+                text_data=json.dumps({"type": "error", "detail": "lat/lng required (or order not found)"})
             )
-        await self.send(text_data=json.dumps({"type": "master.location.saved", "data": location}, cls=DjangoJSONEncoder))
+            return
+        for group_name, group_payload in result["broadcasts"]:
+            await self.channel_layer.group_send(
+                group_name,
+                {"type": "tracking.update", "event": "master.location", "payload": group_payload},
+            )
+        await self.send(
+            text_data=json.dumps({"type": "master.location.saved", "data": result["ack"]}, cls=DjangoJSONEncoder)
+        )
 
 
 class ClientTrackingConsumer(AsyncWebsocketConsumer):
