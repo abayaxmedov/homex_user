@@ -123,4 +123,8 @@ urlpatterns = [
     path("finance/report/", views.DashboardFinanceReportAPIView.as_view(), name="dashboard-finance-report"),
     path("settings/integrations/", views.DashboardIntegrationSettingListCreateAPIView.as_view(), name="dashboard-integration-settings"),
     path("settings/integrations/<uuid:pk>/", views.DashboardIntegrationSettingDetailAPIView.as_view(), name="dashboard-integration-setting-detail"),
+    path("backups/", views.DashboardBackupListCreateAPIView.as_view(), name="dashboard-backups"),
+    path("backups/settings/", views.DashboardBackupSettingsAPIView.as_view(), name="dashboard-backup-settings"),
+    path("backups/<uuid:pk>/", views.DashboardBackupDetailAPIView.as_view(), name="dashboard-backup-detail"),
+    path("backups/<uuid:pk>/download/", views.DashboardBackupDownloadAPIView.as_view(), name="dashboard-backup-download"),
 ]

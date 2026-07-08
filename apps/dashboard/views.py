@@ -4,11 +4,15 @@ from uuid import UUID
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db.models import Count, DecimalField, F, Max, Q, Sum
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
 from rest_framework import generics, permissions
 from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
+
+from apps.dashboard.backups import create_backup, delete_backup, get_auto_config, set_auto_config
 
 from apps.accounts.filters import filter_masters_by_specialization, specialization_counts
 from apps.accounts.models import Client, Master, MasterApprovalStatus
@@ -17,6 +21,7 @@ from apps.common.filters import filter_by_category
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.dashboard.models import (
+    DashboardBackup,
     DashboardCompanyExpense,
     DashboardIntegrationSetting,
     DashboardLiveStream,
@@ -30,6 +35,8 @@ from apps.orders.models import Order, OrderStatus
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
 from apps.support.models import SupportChat, SupportMessage
+from apps.support.services import attach_latest_support_messages, with_latest_support_message
+from apps.support.models import SupportMessage
 from apps.support.services import mark_support_thread_read_by_admin
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
 from apps.wallet.services import accept_cash_handover, reject_cash_handover
@@ -40,6 +47,8 @@ from .serializers import (
     DashboardClientMiniSerializer,
     DashboardClientSerializer,
     DashboardExpenseSerializer,
+    DashboardBackupSerializer,
+    DashboardBackupSettingsSerializer,
     DashboardIntegrationSettingSerializer,
     DashboardLiveStreamSerializer,
     DashboardLoginSerializer,
@@ -745,12 +754,16 @@ class DashboardMasterOrdersAPIView(DashboardPermissionMixin, EnvelopeMixin, gene
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Order.objects.none()
-        queryset = (
-            Order.objects.filter(master_id=self.kwargs["pk"])
+        queryset = filter_by_category(
+            Order.objects.filter(master_id=self.kwargs["pk"]),
+            self.request,
+            field="service__category",
+        )
+        return (
+            queryset
             .select_related("client", "master", "service", "service__category", "address", "tracking")
             .order_by("-created_at")
         )
-        return filter_by_category(queryset, self.request, field="service__category")
 
 
 @extend_schema(
@@ -1349,6 +1362,23 @@ class DashboardMarketProductDetailAPIView(DashboardPermissionMixin, EnvelopeMixi
     serializer_class = DashboardMarketProductSerializer
     queryset = MarketProduct.objects.select_related("category", "seller").prefetch_related("images").all()
 
+    def delete(self, request, *args, **kwargs):
+        # MarketOrder.product is on_delete=PROTECT, so a product that already has
+        # orders cannot be hard-deleted (it would raise ProtectedError -> 500).
+        # Archive it instead (leaves every customer-facing listing) and preserve
+        # order history; hard-delete only when there are no orders.
+        instance = self.get_object()
+        if instance.orders.exists():
+            instance.is_active = False
+            instance.is_moderated = False
+            instance.save(update_fields=["is_active", "is_moderated", "updated_at"])
+            return success_response(
+                {"id": str(instance.id), "deleted": False, "archived": True},
+                message="Mahsulotda buyurtmalar bor — arxivlandi (is_active=False).",
+            )
+        instance.delete()
+        return success_response({"id": str(kwargs.get("pk")), "deleted": True, "archived": False}, message="Mahsulot o'chirildi")
+
 
 @extend_schema(
     tags=[DASHBOARD_MARKET_TAG],
@@ -1623,6 +1653,7 @@ class DashboardSupportThreadListAPIView(DashboardPermissionMixin, generics.Gener
             )
             .order_by("-updated_at")
         )
+        attach_latest_support_messages(chats)
         threads = []
         for chat in chats:
             last_message = (
@@ -1909,3 +1940,81 @@ class DashboardIntegrationSettingListCreateAPIView(DashboardPermissionMixin, Env
 class DashboardIntegrationSettingDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardIntegrationSettingSerializer
     queryset = DashboardIntegrationSetting.objects.all()
+
+
+@extend_schema(
+    tags=[DASHBOARD_SETTINGS_TAG],
+    summary="Backup ro'yxati / yaratish",
+    description=(
+        "GET: mavjud DB backuplari ro'yxati (eng yangisi birinchi). "
+        "POST: hozir to'liq DB backup (.sql) yaratadi — DB yiqilsa shu fayldan tiklash mumkin."
+    ),
+)
+class DashboardBackupListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
+    serializer_class = DashboardBackupSerializer
+
+    def get_queryset(self):
+        return DashboardBackup.objects.all()
+
+    def create(self, request, *args, **kwargs):
+        try:
+            backup = create_backup(
+                source=DashboardBackup.MANUAL, created_by=request.user, note=request.data.get("note", "")
+            )
+        except RuntimeError as exc:
+            return Response({"success": False, "message": str(exc)}, status=500)
+        data = DashboardBackupSerializer(backup, context={"request": request}).data
+        return success_response(data, status=201, message="Backup yaratildi")
+
+
+@extend_schema(
+    tags=[DASHBOARD_SETTINGS_TAG],
+    summary="Backup detail / o'chirish",
+    description="Bitta backupni ko'rish yoki o'chirish (fayl ham diskdan o'chadi).",
+)
+class DashboardBackupDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveDestroyAPIView):
+    serializer_class = DashboardBackupSerializer
+    queryset = DashboardBackup.objects.all()
+
+    def perform_destroy(self, instance):
+        delete_backup(instance)
+
+
+@extend_schema(
+    tags=[DASHBOARD_SETTINGS_TAG],
+    summary="Backup faylni yuklab olish",
+    description="Backup `.sql` faylini yuklab oladi (faqat admin). Fayldan `psql`/`sqlite3` orqali DB tiklanadi.",
+)
+class DashboardBackupDownloadAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = EmptySerializer
+
+    def get(self, request, pk):
+        backup = get_object_or_404(DashboardBackup, pk=pk)
+        if not backup.exists:
+            raise Http404("Backup fayli topilmadi")
+        return FileResponse(
+            open(backup.path, "rb"),
+            as_attachment=True,
+            filename=backup.filename,
+            content_type="application/sql",
+        )
+
+
+@extend_schema(
+    tags=[DASHBOARD_SETTINGS_TAG],
+    summary="Avtomatik backup sozlamasi",
+    description="GET: joriy sozlama. PATCH: `enabled`, `day_of_week` (0-6), `hour`, `keep` o'zgartirish. Avto backup haftalik.",
+)
+class DashboardBackupSettingsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = DashboardBackupSettingsSerializer
+
+    def get(self, request):
+        return success_response(get_auto_config())
+
+    def patch(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        config = set_auto_config(**serializer.validated_data)
+        return success_response(config, message="Avtomatik backup sozlamasi yangilandi")
+
+    post = patch

@@ -459,8 +459,13 @@ class MasterOrderTrackView(generics.GenericAPIView):
     serializer_class = OrderSerializer
 
     def get(self, request, pk):
+        # The lead master OR any assigned master (even before accepting) can track.
         order = get_object_or_404(
-            Order.objects.select_related("master", "tracking", "client"), pk=pk, master=request.user
+            Order.objects.select_related("master", "tracking", "client").filter(
+                Q(master=request.user)
+                | Q(assigned_masters__master=request.user, assigned_masters__is_active=True)
+            ).distinct(),
+            pk=pk,
         )
         return success_response(tracking_payload(order))
 

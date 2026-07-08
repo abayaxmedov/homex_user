@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db.models import Sum
+from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
@@ -11,6 +12,7 @@ from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from apps.accounts.models import Client, Master
 from apps.dashboard.models import (
+    DashboardBackup,
     DashboardCompanyExpense,
     DashboardIntegrationSetting,
     DashboardLiveStream,
@@ -1062,6 +1064,53 @@ class DashboardIntegrationSettingSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at", "updated_at")
 
 
+class DashboardBackupSerializer(serializers.ModelSerializer):
+    size_human = serializers.SerializerMethodField(help_text="O'qishga qulay hajm (KB/MB/GB).")
+    download_url = serializers.SerializerMethodField(help_text="`.sql` faylni yuklab olish havolasi.")
+    exists = serializers.BooleanField(read_only=True, help_text="Fayl diskda mavjudmi.")
+
+    class Meta:
+        model = DashboardBackup
+        fields = (
+            "id",
+            "filename",
+            "size_bytes",
+            "size_human",
+            "engine",
+            "source",
+            "note",
+            "exists",
+            "download_url",
+            "created_at",
+        )
+        read_only_fields = fields
+
+    @extend_schema_field(serializers.CharField)
+    def get_size_human(self, obj):
+        size = float(obj.size_bytes or 0)
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024:
+                return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+    @extend_schema_field(serializers.CharField)
+    def get_download_url(self, obj):
+        request = self.context.get("request")
+        url = reverse("dashboard-backup-download", args=[obj.id])
+        return request.build_absolute_uri(url) if request else url
+
+
+class DashboardBackupSettingsSerializer(serializers.Serializer):
+    """Avtomatik backup sozlamalari (haftalik). DashboardIntegrationSetting'da saqlanadi."""
+
+    enabled = serializers.BooleanField(required=False, help_text="Avtomatik backup yoqilganmi.")
+    frequency = serializers.ChoiceField(choices=("weekly",), required=False, help_text="Hozircha `weekly`.")
+    day_of_week = serializers.IntegerField(min_value=0, max_value=6, required=False, help_text="0=Yakshanba ... 1=Dushanba.")
+    hour = serializers.IntegerField(min_value=0, max_value=23, required=False)
+    keep = serializers.IntegerField(min_value=1, max_value=365, required=False, allow_null=True, help_text="Nechta backup saqlansin.")
+
+
 class DashboardMarketCategorySerializer(serializers.ModelSerializer):
     products_count = serializers.SerializerMethodField()
 
@@ -1086,6 +1135,12 @@ class DashboardMarketProductSerializer(serializers.ModelSerializer):
     category_detail = DashboardMarketCategorySerializer(source="category", read_only=True)
     seller_detail = DashboardClientMiniSerializer(source="seller", read_only=True)
     images = DashboardMarketProductImageSerializer(many=True, read_only=True)
+    uploaded_images = serializers.ListField(
+        child=serializers.ImageField(),
+        write_only=True,
+        required=False,
+        help_text="Bitta so'rovda mahsulot bilan birga yuklanadigan rasmlar (alohida image API shart emas).",
+    )
     orders_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -1105,6 +1160,7 @@ class DashboardMarketProductSerializer(serializers.ModelSerializer):
             "is_active",
             "is_moderated",
             "images",
+            "uploaded_images",
             "orders_count",
             "created_at",
             "updated_at",
@@ -1114,6 +1170,25 @@ class DashboardMarketProductSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.IntegerField)
     def get_orders_count(self, obj):
         return getattr(obj, "orders_count", obj.orders.count())
+
+    @staticmethod
+    def _save_images(product, images):
+        if images:
+            MarketProductImage.objects.bulk_create(
+                [MarketProductImage(product=product, image=image) for image in images]
+            )
+
+    def create(self, validated_data):
+        images = validated_data.pop("uploaded_images", [])
+        product = super().create(validated_data)
+        self._save_images(product, images)
+        return product
+
+    def update(self, instance, validated_data):
+        images = validated_data.pop("uploaded_images", [])
+        product = super().update(instance, validated_data)
+        self._save_images(product, images)
+        return product
 
 
 class DashboardMarketOrderSerializer(serializers.ModelSerializer):

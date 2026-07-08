@@ -6,7 +6,6 @@ from django.urls import reverse_lazy
 
 from apps.common.schema_docs import FRONTEND_GUIDE, OPENAPI_TAGS
 
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -20,6 +19,7 @@ ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split
 LOG_LEVEL = os.getenv("DJANGO_LOG_LEVEL", "INFO")
 
 INSTALLED_APPS = [
+    "daphne",
     "unfold",
     "django.contrib.admin",
     "django.contrib.auth",
@@ -127,6 +127,18 @@ CHANNEL_LAYERS = {
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 
+# Weekly automatic database backup (Monday 02:00). The task itself no-ops when
+# auto-backup is disabled via the dashboard `backups/settings/` endpoint.
+# Requires a running Celery beat: `celery -A config beat`.
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    "weekly-db-backup": {
+        "task": "dashboard.create_weekly_backup",
+        "schedule": crontab(day_of_week=1, hour=2, minute=0),
+    },
+}
+
 LANGUAGE_CODE = "uz"
 TIME_ZONE = "Asia/Tashkent"
 USE_I18N = True
@@ -137,6 +149,11 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
 MEDIA_ROOT = os.getenv("MEDIA_ROOT", BASE_DIR / "media")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Full database backups (.sql). Kept OUTSIDE public MEDIA — they contain all data
+# and are only served through the admin-only download endpoint.
+BACKUP_ROOT = Path(os.getenv("BACKUP_ROOT", BASE_DIR / "backups"))
+BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "30"))  # prune older backups beyond this count
 
 AUTH_PASSWORD_VALIDATORS = []
 
