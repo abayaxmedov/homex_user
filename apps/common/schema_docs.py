@@ -73,10 +73,11 @@ Error response:
 
 | Status | UI label | Ma'nosi |
 |---|---|---|
-| `new` | Usta qidirilmoqda | Client buyurtma yaratgan, tracking ochilgan, hali master birikmagan. |
-| `accepted` | Usta yo'lda | Master buyurtmani oldi va location yuborishi mumkin. |
-| `in_progress` | Usta ishlamoqda | Master `/master/orders/{id}/start/` orqali ishni boshlagan; `before_photo` optional yuboriladi. |
-| `completed` | Usta ishni tugatgan | Master yakunladi; `completion_photo` optional yuboriladi, check tasdiqlangandan keyin client `.docx` yuklab oladi. |
+| `new` | Yangi | Client buyurtma yaratgan; admin ustaga biriktiradi (`/dashboard/orders/{id}/assign/`). Hali usta qabul qilmagan. |
+| `accepted` | Qabul qilindi | Admin biriktirgan usta qabul qildi; birinchi qabul qilgan usta lead bo'ladi. |
+| `on_way` | Yo'lda | Usta `/master/orders/{id}/on-way/` orqali yo'lga chiqdi; location yuboradi. |
+| `arrived` | Yetib keldi | Usta `/master/orders/{id}/arrived/` (yoki `start/`) orqali manzilga yetib keldi; `before_photo` optional. |
+| `completed` | Yakunlandi | Usta yakunladi; `completion_photo` optional, socket yopiladi va to'lov/check bosqichiga o'tadi. |
 | `cancelled` | Bekor qilingan | Client bekor qilgan. |
 | `rejected` | Rad etilgan | Master rad qilgan. |
 

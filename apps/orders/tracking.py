@@ -5,16 +5,20 @@ from channels.layers import get_channel_layer
 
 from apps.accounts.serializers import MasterSummarySerializer
 from apps.common.geo import distance_km, eta_minutes
-from apps.orders.models import OrderStatus, OrderTracking
+from apps.orders.models import ACTIVE_ORDER_STATUSES, Order, OrderStatus, OrderTracking
 
 
 logger = logging.getLogger(__name__)
 
+# Statuses whose orders should keep receiving the master's live location.
+ACTIVE_TRACKING_STATUSES = ACTIVE_ORDER_STATUSES
+
 
 TRACKING_STEPS = (
     {"order_status": OrderStatus.NEW, "key": "searching_master", "label": "Usta qidirilmoqda"},
-    {"order_status": OrderStatus.ACCEPTED, "key": "master_on_way", "label": "Usta yo'lda"},
-    {"order_status": OrderStatus.IN_PROGRESS, "key": "master_working", "label": "Usta ishlamoqda"},
+    {"order_status": OrderStatus.ACCEPTED, "key": "master_accepted", "label": "Usta qabul qildi"},
+    {"order_status": OrderStatus.ON_WAY, "key": "master_on_way", "label": "Usta yo'lda"},
+    {"order_status": OrderStatus.ARRIVED, "key": "master_arrived", "label": "Usta yetib keldi"},
     {"order_status": OrderStatus.COMPLETED, "key": "master_finished", "label": "Usta ishni tugatgan"},
 )
 
@@ -122,6 +126,45 @@ def tracking_payload(order):
 
 def tracking_group(order_id):
     return f"order_tracking_{order_id}"
+
+
+def refresh_master_order_tracking(master, lat, lng, *, order_id=None, distance_hint=None, eta_hint=None, raw_payload=None):
+    """Persist the master's location on their order(s) and build broadcast payloads.
+
+    With an explicit ``order_id`` only that order is refreshed (the app's
+    "I'm on this job" stream). Without it — the app's generic location ping —
+    every active (accepted/in-progress) order of this master is refreshed, so
+    the client's tracking socket keeps getting realtime updates either way.
+    This centralizes the fan-out the same way the support chat centralizes
+    message broadcasts. Returns a list of ``(order, payload)`` pairs.
+    """
+    if order_id:
+        orders = Order.objects.filter(id=order_id, master=master)
+    else:
+        orders = Order.objects.filter(master=master, status__in=ACTIVE_TRACKING_STATUSES)
+
+    updates = []
+    for order in orders.select_related("master", "client"):
+        calculated_distance = distance_hint
+        if calculated_distance in (None, ""):
+            calculated_distance = distance_km(lat, lng, order.lat, order.lng)
+        calculated_eta = eta_hint
+        if calculated_eta in (None, ""):
+            calculated_eta = eta_minutes(calculated_distance)
+        tracking, _ = OrderTracking.objects.update_or_create(
+            order=order,
+            defaults={
+                "master_lat": lat,
+                "master_lng": lng,
+                "distance_km": calculated_distance,
+                "eta_minutes": calculated_eta,
+                "raw_payload": raw_payload or {},
+            },
+        )
+        # Populate the reverse cache so tracking_payload() sees the fresh row.
+        order.tracking = tracking
+        updates.append((order, tracking_payload(order)))
+    return updates
 
 
 def broadcast_tracking(order, payload=None, event_type="tracking.update"):

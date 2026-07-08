@@ -99,8 +99,9 @@ class WebMetaView(generics.GenericAPIView):
                 },
                 "order_statuses": [
                     {"value": OrderStatus.NEW, "label": "Usta qidirilmoqda"},
-                    {"value": OrderStatus.ACCEPTED, "label": "Usta yo'lda"},
-                    {"value": OrderStatus.IN_PROGRESS, "label": "Usta ishlamoqda"},
+                    {"value": OrderStatus.ACCEPTED, "label": "Usta qabul qildi"},
+                    {"value": OrderStatus.ON_WAY, "label": "Usta yo'lda"},
+                    {"value": OrderStatus.ARRIVED, "label": "Usta yetib keldi"},
                     {"value": OrderStatus.COMPLETED, "label": "Bajarildi"},
                     {"value": OrderStatus.CANCELLED, "label": "Bekor qilindi"},
                     {"value": OrderStatus.REJECTED, "label": "Rad etildi"},

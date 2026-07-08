@@ -3,7 +3,7 @@ from uuid import UUID
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.db.models import Count, Max, Q, Sum
+from django.db.models import Count, DecimalField, F, Max, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
@@ -33,7 +33,7 @@ from apps.support.models import SupportChat, SupportMessage
 from apps.support.services import mark_support_thread_read_by_admin
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
 from apps.wallet.services import accept_cash_handover, reject_cash_handover
-from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
+from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
 from .serializers import (
     DashboardCashHandoverSerializer,
     DashboardCompanyExpenseSerializer,
@@ -72,6 +72,7 @@ from .serializers import (
     DashboardSupportMessageSerializer,
     DashboardTariffFeatureSerializer,
     DashboardTariffSerializer,
+    DashboardWarehouseCategorySerializer,
     DashboardWarehouseExpenseSerializer,
     DashboardWarehouseProductSerializer,
     DashboardWalletTransactionSerializer,
@@ -107,7 +108,7 @@ DASHBOARD_LIVE_TAG = "Dashboard - Jonli Kuzatuv"
 DASHBOARD_SUPPORT_TAG = "Dashboard - Xabarlar"
 DASHBOARD_FINANCE_TAG = "Dashboard - Moliya Hisobotlar"
 DASHBOARD_SETTINGS_TAG = "Dashboard - Sozlamalar"
-ACTIVE_ORDER_STATUSES = [OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS]
+ACTIVE_ORDER_STATUSES = [OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED]
 
 
 def bool_param(value):
@@ -121,6 +122,38 @@ def parse_uuid(value):
         return UUID(str(value))
     except (TypeError, ValueError):
         return None
+
+
+ORDER_TAB_ALIASES = {
+    "all": "all", "barchasi": "all",
+    "yangi": "yangi", "new": "yangi",
+    "yo'lda": "yo'lda", "yolda": "yo'lda", "on_way": "yo'lda",
+    "bajarilmoqda": "bajarilmoqda", "in_progress": "bajarilmoqda",
+    "yakunlangan": "yakunlangan", "completed": "yakunlangan",
+    "bekor": "bekor", "bekor qilingan": "bekor", "cancelled": "bekor",
+}
+
+
+def apply_order_tab(queryset, tab):
+    """Filter orders by the Figma status tab (Yangi/Yo'lda/Bajarilmoqda/Yakunlangan/Bekor)."""
+    tab = ORDER_TAB_ALIASES.get((tab or "").strip().lower())
+    if not tab or tab == "all":
+        return queryset
+    if tab == "yangi":
+        # Only unassigned new orders (no active master assigned yet).
+        return queryset.filter(status=OrderStatus.NEW).exclude(assigned_masters__is_active=True)
+    if tab == "yo'lda":
+        return queryset.filter(status=OrderStatus.ON_WAY)
+    if tab == "bajarilmoqda":
+        return queryset.filter(
+            Q(status__in=[OrderStatus.ACCEPTED, OrderStatus.ARRIVED])
+            | Q(status=OrderStatus.NEW, assigned_masters__is_active=True)
+        ).distinct()
+    if tab == "yakunlangan":
+        return queryset.filter(status=OrderStatus.COMPLETED)
+    if tab == "bekor":
+        return queryset.filter(status__in=[OrderStatus.CANCELLED, OrderStatus.REJECTED])
+    return queryset
 
 
 class DashboardPermissionMixin:
@@ -731,9 +764,12 @@ class DashboardOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, g
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Order.objects.none()
-        queryset = Order.objects.select_related("client", "master", "service", "service__category", "address", "tracking")
+        queryset = Order.objects.select_related(
+            "client", "master", "service", "service__category", "address", "tracking"
+        ).prefetch_related("assigned_masters__master", "dashboard_assistants__assistant")
         search = self.request.query_params.get("search")
         status = self.request.query_params.get("status")
+        tab = self.request.query_params.get("tab")
         payment_type = self.request.query_params.get("payment_type")
         client = self.request.query_params.get("client")
         master = self.request.query_params.get("master")
@@ -749,6 +785,8 @@ class DashboardOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, g
             if query_uuid:
                 query |= Q(id=query_uuid)
             queryset = queryset.filter(query)
+        # Figma status tab (Yangi/Yo'lda/Bajarilmoqda/Yakunlangan/Bekor).
+        queryset = apply_order_tab(queryset, tab)
         if status:
             queryset = queryset.filter(status=status)
         if payment_type:
@@ -756,7 +794,10 @@ class DashboardOrderListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, g
         if client:
             queryset = queryset.filter(client_id=client)
         if master:
-            queryset = queryset.filter(master_id=master)
+            # Match the lead master OR an assigned master.
+            queryset = queryset.filter(
+                Q(master_id=master) | Q(assigned_masters__master_id=master, assigned_masters__is_active=True)
+            ).distinct()
         if service:
             queryset = queryset.filter(service_id=service)
         queryset = filter_by_category(queryset, self.request, field="service__category")
@@ -1385,6 +1426,9 @@ class DashboardWarehouseStatsAPIView(DashboardPermissionMixin, generics.GenericA
             "active_products_count": products.filter(is_active=True).count(),
             "low_stock_count": sum(1 for product in products if product.is_low_stock),
             "total_quantity": products.aggregate(total=Sum("quantity"))["total"] or 0,
+            "total_value": products.aggregate(
+                total=Sum(F("cost_price") * F("quantity"), output_field=DecimalField(max_digits=18, decimal_places=2))
+            )["total"] or 0,
             "master_inventory_count": MasterInventory.objects.count(),
             "stock_in_count": StockMovement.objects.filter(movement_type=StockMovement.IN).count(),
             "stock_out_count": StockMovement.objects.filter(movement_type=StockMovement.OUT).count(),
@@ -1394,14 +1438,44 @@ class DashboardWarehouseStatsAPIView(DashboardPermissionMixin, generics.GenericA
 
 @extend_schema(
     tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Ombor kategoriyalari",
+    description="Ombor mahsulot kategoriyalari ro'yxatini search bilan qaytaradi yoki yangi kategoriya yaratadi.",
+)
+class DashboardWarehouseCategoryListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
+    serializer_class = DashboardWarehouseCategorySerializer
+
+    def get_queryset(self):
+        queryset = WarehouseCategory.objects.annotate(products_count=Count("products", distinct=True))
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(Q(name__icontains=search) | Q(slug__icontains=search))
+        return queryset.order_by("name")
+
+
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
+    summary="Ombor kategoriya detail",
+    description="Ombor kategoriya detail/edit modalida kategoriyani ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+)
+class DashboardWarehouseCategoryDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = DashboardWarehouseCategorySerializer
+    queryset = WarehouseCategory.objects.all()
+
+
+@extend_schema(
+    tags=[DASHBOARD_WAREHOUSE_TAG],
     summary="Ombor mahsulotlari",
-    description="Ombor mahsulotlari jadvali uchun product ro'yxatini search/active/low_stock filterlari bilan qaytaradi yoki yangi ombor mahsuloti yaratadi.",
+    description="Ombor mahsulotlari jadvali uchun product ro'yxatini search/active/low_stock/category filterlari bilan qaytaradi yoki yangi ombor mahsuloti yaratadi.",
 )
 class DashboardWarehouseProductListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardWarehouseProductSerializer
 
     def get_queryset(self):
-        queryset = WarehouseProduct.objects.annotate(movements_count=Count("movements", distinct=True))
+        queryset = (
+            WarehouseProduct.objects.select_related("category")
+            .annotate(movements_count=Count("movements", distinct=True))
+            .order_by("name")
+        )
         search = self.request.query_params.get("search")
         is_active = bool_param(self.request.query_params.get("is_active"))
         low_stock = bool_param(self.request.query_params.get("low_stock"))
@@ -1409,6 +1483,8 @@ class DashboardWarehouseProductListCreateAPIView(DashboardPermissionMixin, Envel
             queryset = queryset.filter(name__icontains=search)
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active)
+        # Applied before the low_stock branch below, which materialises the queryset into a list.
+        queryset = filter_by_category(queryset, self.request, field="category")
         if low_stock is True:
             queryset = [product for product in queryset if product.is_low_stock]
         return queryset

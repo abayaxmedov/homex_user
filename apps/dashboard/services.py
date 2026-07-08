@@ -158,7 +158,8 @@ def get_weekly_orders(target_date):
             total=Count("id"),
             new=Count("id", filter=Q(status=OrderStatus.NEW)),
             accepted=Count("id", filter=Q(status=OrderStatus.ACCEPTED)),
-            in_progress=Count("id", filter=Q(status=OrderStatus.IN_PROGRESS)),
+            on_way=Count("id", filter=Q(status=OrderStatus.ON_WAY)),
+            arrived=Count("id", filter=Q(status=OrderStatus.ARRIVED)),
             completed=Count("id", filter=Q(status=OrderStatus.COMPLETED)),
             cancelled=Count("id", filter=Q(status=OrderStatus.CANCELLED)),
             rejected=Count("id", filter=Q(status=OrderStatus.REJECTED)),
@@ -169,16 +170,15 @@ def get_weekly_orders(target_date):
     for offset in range(7):
         day = start_date + timedelta(days=offset)
         row = by_day.get(day, {})
-        accepted = row.get("accepted", 0)
         items.append(
             {
                 "date": day.isoformat(),
                 "weekday": WEEKDAY_UZ[day.weekday()],
                 "total": row.get("total", 0),
                 "new": row.get("new", 0),
-                "accepted": accepted,
-                "on_way": accepted,
-                "in_progress": row.get("in_progress", 0),
+                "accepted": row.get("accepted", 0),
+                "on_way": row.get("on_way", 0),
+                "arrived": row.get("arrived", 0),
                 "completed": row.get("completed", 0),
                 "cancelled": row.get("cancelled", 0),
                 "rejected": row.get("rejected", 0),

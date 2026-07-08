@@ -1,17 +1,35 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 from apps.common.models import TimeStampedUUIDModel
 
 
 class OrderStatus(models.TextChoices):
-    NEW = "new", "New"
-    ACCEPTED = "accepted", "Accepted"
-    IN_PROGRESS = "in_progress", "In progress"
-    COMPLETED = "completed", "Completed"
-    CANCELLED = "cancelled", "Cancelled"
-    REJECTED = "rejected", "Rejected"
+    NEW = "new", "Yangi"
+    ACCEPTED = "accepted", "Qabul qilindi"
+    ON_WAY = "on_way", "Yo'lda"
+    ARRIVED = "arrived", "Yetib keldi"
+    COMPLETED = "completed", "Yakunlandi"
+    CANCELLED = "cancelled", "Bekor qilindi"
+    REJECTED = "rejected", "Rad etildi"
+
+
+# Statuses in which a master is actively handling the order (lead master set).
+ACTIVE_ORDER_STATUSES = (OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED)
+
+# Maps the fine-grained order status to the coarse dashboard tab/badge bucket
+# used in the Figma design (Yangi / Yo'lda / Bajarilmoqda / Yakunlangan / Bekor).
+STATUS_TAB = {
+    OrderStatus.NEW: "yangi",
+    OrderStatus.ACCEPTED: "bajarilmoqda",
+    OrderStatus.ON_WAY: "yo'lda",
+    OrderStatus.ARRIVED: "bajarilmoqda",
+    OrderStatus.COMPLETED: "yakunlangan",
+    OrderStatus.CANCELLED: "bekor",
+    OrderStatus.REJECTED: "bekor",
+}
 
 
 class PaymentType(models.TextChoices):
@@ -102,6 +120,33 @@ class Order(TimeStampedUUIDModel):
 
     def __str__(self):
         return f"{self.service} - {self.status}"
+
+
+class OrderMaster(TimeStampedUUIDModel):
+    """A master the admin assigned to an order (dashboard "Usta biriktirish").
+
+    An order can have several assigned masters; ``Order.master`` records the one
+    who first accepts and becomes the lead (used for tracking / lifecycle).
+    """
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="assigned_masters")
+    master = models.ForeignKey("accounts.Master", on_delete=models.PROTECT, related_name="assigned_orders")
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,  # dashboard admin who assigned the master
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_order_masters",
+    )
+    has_accepted = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ("created_at",)
+        unique_together = ("order", "master")
+
+    def __str__(self):
+        return f"{self.order_id} - {self.master}"
 
 
 class OrderInventoryUsage(TimeStampedUUIDModel):

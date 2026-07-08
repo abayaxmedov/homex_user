@@ -20,13 +20,14 @@ from apps.dashboard.models import (
 )
 from apps.market.models import MarketCategory, MarketOrder, MarketProduct, MarketProductImage
 from apps.notifications.models import Notification
-from apps.orders.models import Order, OrderStatus, OrderTracking
+from apps.orders.models import STATUS_TAB, Order, OrderMaster, OrderStatus, OrderTracking
 from apps.orders.tracking import ensure_tracking, tracking_state
+from apps.notifications.services import create_notification
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
 from apps.support.models import SupportMessage
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
-from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
+from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
 
 
 DASHBOARD_ROLE = "admin"
@@ -560,7 +561,14 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
     service_detail = DashboardServiceMiniSerializer(source="service", read_only=True)
     tracking = DashboardOrderTrackingSerializer(read_only=True)
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    status_tab = serializers.SerializerMethodField(
+        help_text="Figma tab/badge bucket: yangi / yo'lda / bajarilmoqda / yakunlangan / bekor."
+    )
     payment_type_label = serializers.CharField(source="get_payment_type_display", read_only=True)
+    assigned_masters = serializers.SerializerMethodField(help_text="Orderga biriktirilgan ustalar (Figma 'Usta' ustuni).")
+    masters_count = serializers.SerializerMethodField(help_text="Biriktirilgan ustalar soni (Figma badge).")
+    assistants = serializers.SerializerMethodField(help_text="Orderga biriktirilgan shogirdlar (Figma 'Shogird' ustuni).")
+    assistants_count = serializers.SerializerMethodField(help_text="Biriktirilgan shogirdlar soni (Figma badge).")
     can_cancel = serializers.SerializerMethodField(help_text="Frontend cancel button ko'rsatishi mumkinmi.")
     can_rate = serializers.SerializerMethodField(help_text="Frontend rating button/modal ko'rsatishi mumkinmi.")
     time = serializers.SerializerMethodField(help_text="created_at dan HH:MM format.")
@@ -588,8 +596,13 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
             "note",
             "status",
             "status_label",
+            "status_tab",
             "payment_type",
             "payment_type_label",
+            "assigned_masters",
+            "masters_count",
+            "assistants",
+            "assistants_count",
             "service_fee",
             "inventory_total",
             "bonus_used",
@@ -611,7 +624,12 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
             "master_detail",
             "service_detail",
             "status_label",
+            "status_tab",
             "payment_type_label",
+            "assigned_masters",
+            "masters_count",
+            "assistants",
+            "assistants_count",
             "tracking",
             "can_cancel",
             "can_rate",
@@ -620,7 +638,7 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         extra_kwargs = {
-            "status": {"help_text": "`new`, `accepted`, `in_progress`, `completed`, `cancelled`, `rejected`."},
+            "status": {"help_text": "`new`, `accepted`, `on_way`, `arrived`, `completed`, `cancelled`, `rejected`."},
             "payment_type": {"help_text": "`cash`, `online`, `card`, `plastic`."},
             "service_fee": {"help_text": "Service narxi. Berilmasa service.base_price olinadi."},
             "inventory_total": {"help_text": "Usta ishlatgan mahsulotlar jami."},
@@ -632,9 +650,38 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
     def get_code(self, obj):
         return f"ORD-{str(obj.id).split('-')[0].upper()}"
 
+    @extend_schema_field(serializers.CharField)
+    def get_status_tab(self, obj):
+        return STATUS_TAB.get(obj.status, obj.status)
+
+    def _active_assigned(self, obj):
+        # Uses the prefetched reverse manager when available to avoid N+1.
+        return [om for om in obj.assigned_masters.all() if om.is_active]
+
+    @extend_schema_field(DashboardMasterMiniSerializer(many=True))
+    def get_assigned_masters(self, obj):
+        masters = [om.master for om in self._active_assigned(obj)]
+        return DashboardMasterMiniSerializer(masters, many=True).data
+
+    @extend_schema_field(serializers.IntegerField)
+    def get_masters_count(self, obj):
+        return len(self._active_assigned(obj))
+
+    def _active_assistants(self, obj):
+        return [a for a in obj.dashboard_assistants.all() if a.is_active]
+
+    @extend_schema_field(DashboardMasterMiniSerializer(many=True))
+    def get_assistants(self, obj):
+        assistants = [a.assistant for a in self._active_assistants(obj)]
+        return DashboardMasterMiniSerializer(assistants, many=True).data
+
+    @extend_schema_field(serializers.IntegerField)
+    def get_assistants_count(self, obj):
+        return len(self._active_assistants(obj))
+
     @extend_schema_field(serializers.BooleanField)
     def get_can_cancel(self, obj):
-        return obj.status in {OrderStatus.NEW, OrderStatus.ACCEPTED}
+        return obj.status in {OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.ON_WAY}
 
     @extend_schema_field(serializers.BooleanField)
     def get_can_rate(self, obj):
@@ -696,18 +743,90 @@ class DashboardOrderStatusSerializer(serializers.Serializer):
 
 
 class DashboardOrderAssignSerializer(serializers.Serializer):
-    master = serializers.PrimaryKeyRelatedField(queryset=Master.objects.filter(is_active=True), allow_null=True)
-    status = serializers.ChoiceField(choices=OrderStatus.choices, required=False)
+    """Assign masters (Usta) and/or assistants (Shogird) to an order.
+
+    Both Figma modals ("Usta biriktirish" / "Shogird biriktirish") send the full
+    selection on Saqlash, so each provided list REPLACES the current active set.
+    Only the keys that are present are touched. Assignment does NOT change the
+    order status — the order stays `new` until a master accepts.
+    """
+
+    masters = serializers.PrimaryKeyRelatedField(
+        queryset=Master.objects.filter(is_active=True),
+        many=True,
+        required=False,
+        help_text="Biriktiriladigan usta id'lari (to'liq tanlov).",
+    )
+    assistants = serializers.PrimaryKeyRelatedField(
+        queryset=Master.objects.filter(is_active=True),
+        many=True,
+        required=False,
+        help_text="Biriktiriladigan shogird id'lari (to'liq tanlov).",
+    )
+    master = serializers.PrimaryKeyRelatedField(
+        queryset=Master.objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
+        help_text="(Eski, ixtiyoriy) bitta usta. `masters` ro'yxati afzal.",
+    )
+
+    def validate(self, attrs):
+        if not any(key in self.initial_data for key in ("masters", "assistants", "master")):
+            raise serializers.ValidationError("`masters`, `assistants` yoki `master` yuboring")
+        return attrs
+
+    def _admin(self):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return user if getattr(user, "is_authenticated", False) else None
+
+    @staticmethod
+    def _sync_set(order, related_name, master_field, wanted, admin):
+        """Replace the active related set (OrderMaster / DashboardOrderAssistant)."""
+        wanted_ids = {m.id for m in wanted}
+        existing = {getattr(row, f"{master_field}_id"): row for row in getattr(order, related_name).all()}
+        for master_id, row in existing.items():
+            if master_id not in wanted_ids and row.is_active:
+                row.is_active = False
+                row.save(update_fields=["is_active", "updated_at"])
+        created = []
+        manager = getattr(order, related_name)
+        for master in wanted:
+            row = existing.get(master.id)
+            if row is None:
+                manager.create(**{master_field: master, "assigned_by": admin})
+                created.append(master)
+            elif not row.is_active:
+                row.is_active = True
+                row.assigned_by = admin
+                row.save(update_fields=["is_active", "assigned_by", "updated_at"])
+                created.append(master)
+        return created
 
     def save(self, **kwargs):
         order = kwargs["order"]
-        order.master = self.validated_data["master"]
-        if "status" in self.validated_data:
-            order.status = self.validated_data["status"]
-        elif order.master_id and order.status == OrderStatus.NEW:
-            order.status = OrderStatus.ACCEPTED
-        order.save(update_fields=["master", "status", "updated_at"])
+        admin = self._admin()
+
+        masters = self.validated_data.get("masters")
+        if masters is None and self.validated_data.get("master") is not None:
+            masters = [self.validated_data["master"]]
+
+        newly_assigned = []
+        if masters is not None:
+            newly_assigned += self._sync_set(order, "assigned_masters", "master", masters, admin)
+        if "assistants" in self.validated_data:
+            self._sync_set(order, "dashboard_assistants", "assistant", self.validated_data["assistants"], admin)
+
         ensure_tracking(order)
+        for master in newly_assigned:
+            create_notification(
+                role="master",
+                master=master,
+                title="Yangi buyurtma biriktirildi",
+                body=order.address_text,
+                data={"order_id": str(order.id), "status": order.status},
+            )
+        order.refresh_from_db()
         return order
 
 
@@ -1021,18 +1140,38 @@ class DashboardMarketOrderSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "client_detail", "product_detail", "total_amount", "created_at", "updated_at")
 
 
+class DashboardWarehouseCategorySerializer(serializers.ModelSerializer):
+    products_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WarehouseCategory
+        fields = ("id", "name", "slug", "products_count", "created_at", "updated_at")
+        read_only_fields = ("id", "products_count", "created_at", "updated_at")
+
+    @extend_schema_field(serializers.IntegerField)
+    def get_products_count(self, obj):
+        return getattr(obj, "products_count", obj.products.count())
+
+
 class DashboardWarehouseProductSerializer(serializers.ModelSerializer):
     is_low_stock = serializers.BooleanField(read_only=True)
     movements_count = serializers.SerializerMethodField()
+    category_detail = DashboardWarehouseCategorySerializer(source="category", read_only=True)
+    stock_value = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
 
     class Meta:
         model = WarehouseProduct
         fields = (
             "id",
+            "category",
+            "category_detail",
             "name",
             "unit",
             "quantity",
             "low_threshold",
+            "cost_price",
+            "sale_price",
+            "stock_value",
             "image",
             "is_active",
             "is_low_stock",
@@ -1040,7 +1179,7 @@ class DashboardWarehouseProductSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "is_low_stock", "movements_count", "created_at", "updated_at")
+        read_only_fields = ("id", "is_low_stock", "movements_count", "stock_value", "created_at", "updated_at")
 
     @extend_schema_field(serializers.IntegerField)
     def get_movements_count(self, obj):

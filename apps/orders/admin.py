@@ -1,7 +1,16 @@
 from django.contrib import admin
 
 from apps.common.admin_mixins import HomeXModelAdmin, HomeXTabularInline
-from apps.orders.models import HomeBanner, Order, OrderInventoryUsage, OrderTracking, Review, ReviewPhoto
+from apps.dashboard.models import DashboardOrderAssistant
+from apps.orders.models import (
+    HomeBanner,
+    Order,
+    OrderInventoryUsage,
+    OrderMaster,
+    OrderTracking,
+    Review,
+    ReviewPhoto,
+)
 
 
 @admin.register(HomeBanner)
@@ -17,24 +26,56 @@ class OrderInventoryUsageInline(HomeXTabularInline):
     model = OrderInventoryUsage
 
 
+class OrderMasterInline(HomeXTabularInline):
+    """Usta biriktirish (dashboard 'Usta biriktirish' modalining admin ekvivalenti)."""
+
+    model = OrderMaster
+    fields = ("master", "has_accepted", "assigned_by", "is_active")
+    autocomplete_fields = ("master",)
+    extra = 0
+
+
+class OrderAssistantInline(HomeXTabularInline):
+    """Shogird biriktirish (dashboard 'Shogird biriktirish' modali)."""
+
+    model = DashboardOrderAssistant
+    fields = ("assistant", "assigned_by", "note", "is_active")
+    autocomplete_fields = ("assistant",)
+    extra = 0
+
+
 @admin.register(Order)
 class OrderAdmin(HomeXModelAdmin):
     list_display = (
         "id",
         "client",
         "master",
+        "masters_count",
+        "assistants_count",
         "service",
         "status",
         "payment_type",
         "total_amount",
-        "before_photo",
-        "completion_photo",
-        "receipt_approved_at",
         "scheduled_date",
     )
     search_fields = ("client__phone", "master__phone", "address_text", "note")
     list_filter = ("status", "payment_type", "scheduled_date")
-    inlines = [OrderInventoryUsageInline]
+    inlines = [OrderMasterInline, OrderAssistantInline, OrderInventoryUsageInline]
+
+    @admin.display(description="Ustalar")
+    def masters_count(self, obj):
+        return obj.assigned_masters.filter(is_active=True).count()
+
+    @admin.display(description="Shogirdlar")
+    def assistants_count(self, obj):
+        return obj.dashboard_assistants.filter(is_active=True).count()
+
+
+@admin.register(OrderMaster)
+class OrderMasterAdmin(HomeXModelAdmin):
+    list_display = ("order", "master", "has_accepted", "is_active", "assigned_by", "created_at")
+    search_fields = ("order__id", "master__phone", "master__first_name", "master__last_name")
+    list_filter = ("has_accepted", "is_active")
 
 
 @admin.register(OrderInventoryUsage)

@@ -76,8 +76,9 @@ def test_master_and_client_order_api_flow(client_api, master_api, master, client
         format="json",
     )
     order = Order.objects.get(client=client_user)
-    order.master = master
-    order.save(update_fields=["master"])
+    from apps.orders.models import OrderMaster
+
+    OrderMaster.objects.create(order=order, master=master)  # admin assigns the master
 
     list_response = master_api.get(reverse("master-orders"))
     accept_response = master_api.post(reverse("master-order-accept", args=[order.id]))

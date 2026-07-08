@@ -15,20 +15,22 @@ from apps.services.models import Service, ServiceCategory
 MASTER_STATUS_CHOICES = ("active", "busy", "inactive", "blocked")
 ORDER_STATUS_TO_DASHBOARD = {
     OrderStatus.NEW: "new",
-    OrderStatus.ACCEPTED: "on_way",
-    OrderStatus.IN_PROGRESS: "in_progress",
+    OrderStatus.ACCEPTED: "accepted",
+    OrderStatus.ON_WAY: "on_way",
+    OrderStatus.ARRIVED: "in_progress",
     OrderStatus.COMPLETED: "completed",
     OrderStatus.CANCELLED: "cancelled",
     OrderStatus.REJECTED: "cancelled",
 }
 ORDER_STATUS_FROM_DASHBOARD = {
     "new": OrderStatus.NEW,
-    "on_way": OrderStatus.ACCEPTED,
-    "in_progress": OrderStatus.IN_PROGRESS,
+    "accepted": OrderStatus.ACCEPTED,
+    "on_way": OrderStatus.ON_WAY,
+    "in_progress": OrderStatus.ARRIVED,
+    "arrived": OrderStatus.ARRIVED,
     "completed": OrderStatus.COMPLETED,
     "cancelled": OrderStatus.CANCELLED,
-    "delayed": OrderStatus.ACCEPTED,
-    "accepted": OrderStatus.ACCEPTED,
+    "delayed": OrderStatus.ARRIVED,
     "rejected": OrderStatus.REJECTED,
 }
 

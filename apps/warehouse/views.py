@@ -5,15 +5,17 @@ from rest_framework import generics, permissions
 
 from apps.accounts.models import Master
 from apps.accounts.permissions import IsMaster
+from apps.common.filters import filter_by_category
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.orders.models import Order, OrderInventoryUsage
-from apps.warehouse.models import MasterInventory, StockMovement, WarehouseProduct
+from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
 from apps.warehouse.serializers import (
     AdminAssignInventorySerializer,
     AdminUpdateInventorySerializer,
     MasterInventorySerializer,
     UseInventorySerializer,
+    WarehouseCategorySerializer,
     WarehouseProductSerializer,
 )
 
@@ -26,9 +28,13 @@ class MasterInventoryListView(EnvelopeMixin, generics.ListAPIView):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return MasterInventory.objects.none()
-        queryset = MasterInventory.objects.filter(master=self.request.user).select_related("warehouse_product")
+        queryset = MasterInventory.objects.filter(master=self.request.user).select_related(
+            "warehouse_product", "warehouse_product__category"
+        )
         search = self.request.query_params.get("search")
-        return queryset.filter(warehouse_product__name__icontains=search) if search else queryset
+        if search:
+            queryset = queryset.filter(warehouse_product__name__icontains=search)
+        return filter_by_category(queryset, self.request, field="warehouse_product__category")
 
 
 @extend_schema_view(get=extend_schema(tags=["Master Inventory"]))
@@ -116,11 +122,25 @@ class AdminUpdateInventoryView(generics.GenericAPIView):
 
 
 @extend_schema_view(get=extend_schema(tags=["Admin Warehouse Products"]))
+class WarehouseCategoryListView(EnvelopeMixin, generics.ListAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = WarehouseCategorySerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return WarehouseCategory.objects.annotate(
+            products_count=models.Count("products", filter=models.Q(products__is_active=True))
+        ).order_by("name")
+
+
+@extend_schema_view(get=extend_schema(tags=["Admin Warehouse Products"]))
 class WarehouseProductListView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [permissions.IsAdminUser]
     serializer_class = WarehouseProductSerializer
 
     def get_queryset(self):
-        queryset = WarehouseProduct.objects.filter(is_active=True)
+        queryset = WarehouseProduct.objects.filter(is_active=True).select_related("category").order_by("name")
         search = self.request.query_params.get("search")
-        return queryset.filter(name__icontains=search) if search else queryset
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+        return filter_by_category(queryset, self.request, field="category")

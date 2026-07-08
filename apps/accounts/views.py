@@ -426,7 +426,7 @@ class MasterAppBootstrapView(generics.GenericAPIView):
         from django.db.models import Avg, F, Sum
 
         from apps.notifications.models import Notification
-        from apps.orders.models import Order, OrderStatus, PaymentType, Review
+        from apps.orders.models import ACTIVE_ORDER_STATUSES, Order, OrderStatus, PaymentType, Review
         from apps.orders.serializers import OrderSerializer
         from apps.wallet.models import MasterWallet, WithdrawRequest
         from apps.wallet.serializers import MasterWalletSerializer, WithdrawRequestSerializer
@@ -436,9 +436,11 @@ class MasterAppBootstrapView(generics.GenericAPIView):
         today = timezone.localdate()
         wallet, _ = MasterWallet.objects.get_or_create(master=request.user)
         current_orders = Order.objects.filter(
-            master=request.user, status__in=[OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS]
-        ).select_related("service", "client", "tracking")[:5]
-        new_orders = Order.objects.filter(status=OrderStatus.NEW, master__isnull=True).select_related("service", "client")[:10]
+            assigned_masters__master=request.user, status__in=ACTIVE_ORDER_STATUSES
+        ).select_related("service", "client", "tracking").distinct()[:5]
+        new_orders = Order.objects.filter(
+            assigned_masters__master=request.user, status=OrderStatus.NEW
+        ).select_related("service", "client").distinct()[:10]
         completed_today = Order.objects.filter(master=request.user, status=OrderStatus.COMPLETED, scheduled_date=today)
         data = {
             "profile": MasterProfileSerializer(request.user).data,
@@ -453,10 +455,12 @@ class MasterAppBootstrapView(generics.GenericAPIView):
                 "today_income": completed_today.aggregate(total=Sum("total_amount"))["total"] or 0,
                 "today_orders": Order.objects.filter(master=request.user, scheduled_date=today).count(),
                 "orders_count": Order.objects.filter(master=request.user).count(),
-                "new_orders_count": Order.objects.filter(status=OrderStatus.NEW, master__isnull=True).count(),
+                "new_orders_count": Order.objects.filter(
+                    assigned_masters__master=request.user, status=OrderStatus.NEW
+                ).distinct().count(),
                 "in_process_orders_count": Order.objects.filter(
-                    master=request.user, status__in=[OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS]
-                ).count(),
+                    assigned_masters__master=request.user, status__in=ACTIVE_ORDER_STATUSES
+                ).distinct().count(),
                 "average_rating": Review.objects.filter(master=request.user).aggregate(avg=Avg("rating"))["avg"] or 0,
                 "low_stock_count": MasterInventory.objects.filter(master=request.user, quantity__lte=F("low_threshold")).count(),
                 "unread_notifications": Notification.objects.filter(master=request.user, is_read=False).count(),
