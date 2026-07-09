@@ -18,9 +18,12 @@ from asgiref.sync import async_to_sync, sync_to_async
 from asgiref.testing import ApplicationCommunicator
 from channels.routing import URLRouter
 
+from channels.layers import get_channel_layer
+
 from apps.accounts.tokens import issue_role_tokens
 from apps.accounts.ws_auth import RoleJWTAuthMiddleware
 from apps.orders.models import Order, OrderStatus
+from apps.orders.tracking import tracking_group
 from config.routing import websocket_urlpatterns
 
 
@@ -100,6 +103,39 @@ async def connect_client_track(order, client_user):
     return communicator, snapshot
 
 
+async def connect_client_notifications(client_user):
+    communicator = WebsocketCommunicator(
+        make_app(), "/ws/client/notifications/", headers=bearer_headers(client_user, "client")
+    )
+    connected, _ = await communicator.connect(timeout=TIMEOUT)
+    assert connected, "client notification socket did not accept the connection"
+    return communicator
+
+
+@pytest.mark.django_db
+def test_tracking_broadcast_payload_is_redis_serializable(client_user, master, service):
+    """Regression: broadcasts must survive the Redis channel layer.
+
+    channels_redis packs group messages with msgpack, which cannot encode the
+    UUID/Decimal values tracking_payload() carries. Without json_safe() the
+    broadcast raised "can not serialize 'UUID' object" and no realtime arrived
+    (the bug was masked by the InMemory layer used in the other tests).
+    """
+    import msgpack
+
+    from apps.orders.tracking import json_safe, tracking_payload
+
+    order = make_order(client_user, service, master=master, status=OrderStatus.ACCEPTED)
+    payload = tracking_payload(order)
+
+    # Raw payload (UUID order_id, Decimal lat/lng) is NOT msgpack-serializable.
+    with pytest.raises(TypeError):
+        msgpack.packb(payload)
+
+    # json_safe() normalizes it so the Redis channel layer can broadcast it.
+    msgpack.packb(json_safe(payload))  # must not raise
+
+
 @pytest.mark.django_db(transaction=True)
 def test_client_track_ws_receives_master_location_from_master_ws(client_user, master, service):
     order = make_order(client_user, service, master=master, status=OrderStatus.ACCEPTED)
@@ -162,12 +198,22 @@ def test_client_track_ws_receives_master_location_without_order_id(client_user, 
 
 
 @pytest.mark.django_db(transaction=True)
-def test_client_track_ws_receives_status_updates(client_user, master, service):
+def test_status_change_arrives_on_notification_socket_not_tracking(client_user, master, service):
+    """Status changes are realtime on the NOTIFICATION socket, not the tracking one.
+
+    The tracking socket is location-only now: any code path that saves a status
+    change pushes an ``order.status`` event to the client's notification socket
+    (no refresh, no DB write) and must NOT surface on the tracking socket.
+    """
     order = make_order(client_user, service)
 
     async def scenario():
-        client_ws, snapshot = await connect_client_track(order, client_user)
-        assert snapshot["data"]["tracking_status"] == "searching_master"
+        notif_ws = await connect_client_notifications(client_user)
+
+        # Watch the tracking group directly to prove status does NOT go there.
+        channel_layer = get_channel_layer()
+        track_channel = await channel_layer.new_channel()
+        await channel_layer.group_add(tracking_group(order.id), track_channel)
 
         # Master accepts the order (any code path that saves a status change).
         def accept():
@@ -178,12 +224,20 @@ def test_client_track_ws_receives_status_updates(client_user, master, service):
 
         await sync_to_async(accept)()
 
-        event = json.loads(await client_ws.receive_from(timeout=TIMEOUT))
-        assert event["type"] == "tracking.update"
-        assert event["data"]["status"] == OrderStatus.ACCEPTED
-        assert event["data"]["tracking_status"] == "master_accepted"
+        # Lands on the notification socket in realtime. The WS envelope is
+        # {type, data: <notification>}, and the domain payload sits in
+        # notification.data (order_id/status/...).
+        event = json.loads(await notif_ws.receive_from(timeout=TIMEOUT))
+        assert event["type"] == "order.status"
+        assert event["data"]["data"]["status"] == OrderStatus.ACCEPTED
+        assert event["data"]["data"]["order_id"] == str(order.id)
+        assert event["data"]["data"]["status_tab"] == "bajarilmoqda"
 
-        await client_ws.disconnect()
+        # ...and NOT on the tracking group (it only carries the master's location).
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(channel_layer.receive(track_channel), timeout=0.3)
+
+        await notif_ws.disconnect()
 
     async_to_sync(scenario)()
 

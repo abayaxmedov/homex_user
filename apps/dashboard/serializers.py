@@ -1331,6 +1331,7 @@ class DashboardSupportMessageSerializer(serializers.ModelSerializer):
 
 class DashboardMasterWalletSerializer(serializers.ModelSerializer):
     master_detail = DashboardMasterMiniSerializer(source="master", read_only=True)
+    total_balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
     class Meta:
         model = MasterWallet
@@ -1340,6 +1341,7 @@ class DashboardMasterWalletSerializer(serializers.ModelSerializer):
             "master_detail",
             "balance_online",
             "balance_cash",
+            "total_balance",
             "total_earned",
             "total_withdrawn",
             "created_at",

@@ -26,6 +26,8 @@ urlpatterns = [
     path("profile/", views.ClientProfileView.as_view(), name="client-profile"),
     path("profile/notifications/", views.ClientNotificationSettingsView.as_view(), name="client-notification-settings"),
     path("push/register/", views.ClientPushRegisterView.as_view(), name="client-push-register"),
+    # DB-backed admin notifications (list/read/read-all). Realtime status events are
+    # separate: DB-less, delivered only over ws/client/notifications/ + FCM.
     path("notifications/", include("apps.notifications.client_urls")),
     path("support/", include("apps.support.client_urls")),
     path("privacy-policy/", include("apps.profiles.privacy_urls")),

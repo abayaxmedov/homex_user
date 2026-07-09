@@ -1,8 +1,14 @@
 from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+
+
+@extend_schema_field(OpenApiTypes.BINARY)
+class UploadImageField(serializers.ImageField):
+    """ImageField that Swagger renders as a file-upload (binary), not a URL string."""
 
 from apps.accounts.models import Master
 from apps.accounts.serializers import MasterSummarySerializer
@@ -299,7 +305,7 @@ class OrderRejectSerializer(serializers.Serializer):
 
 
 class OrderStartSerializer(serializers.Serializer):
-    before_photo = serializers.ImageField(required=False)
+    before_photo = UploadImageField(required=False)
 
     @transaction.atomic
     def save(self, **kwargs):
@@ -327,7 +333,7 @@ class OrderStartSerializer(serializers.Serializer):
 class OrderCompleteSerializer(serializers.Serializer):
     service_fee = serializers.DecimalField(max_digits=12, decimal_places=2)
     payment_type = serializers.ChoiceField(choices=PaymentType.choices)
-    completion_photo = serializers.ImageField(required=False)
+    completion_photo = UploadImageField(required=False)
     used_items = serializers.ListField(child=serializers.DictField(), required=False)
 
     @transaction.atomic

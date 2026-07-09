@@ -4,9 +4,11 @@ from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, W
 
 
 class MasterWalletSerializer(serializers.ModelSerializer):
+    total_balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+
     class Meta:
         model = MasterWallet
-        fields = ("balance_online", "balance_cash", "total_earned", "total_withdrawn", "updated_at")
+        fields = ("balance_online", "balance_cash", "total_balance", "total_earned", "total_withdrawn", "updated_at")
 
 
 class WalletTransactionSerializer(serializers.ModelSerializer):

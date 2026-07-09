@@ -1,10 +1,11 @@
-from datetime import timedelta
+import io
+from datetime import date, timedelta
 from uuid import UUID
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db.models import Count, DecimalField, F, Max, Q, Sum
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
@@ -92,11 +93,16 @@ from .serializers import (
 from .services import (
     WEEKDAY_UZ,
     default_target_date,
+    format_uzs,
+    get_finance_summary,
+    get_income_by_service,
     get_income_dynamics,
     get_income_expense,
     get_orders_by_service,
     get_stats,
+    get_top_clients,
     get_weekly_orders,
+    money,
 )
 
 
@@ -1811,6 +1817,23 @@ class DashboardWithdrawRequestDetailAPIView(DashboardPermissionMixin, EnvelopeMi
     serializer_class = DashboardWithdrawRequestSerializer
     queryset = WithdrawRequest.objects.select_related("master").all()
 
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        new_status = serializer.validated_data.get("status", instance.status)
+        note = serializer.validated_data.get("admin_note") or ""
+        # Route status transitions through the shared wallet service so approving a
+        # withdraw here ACTUALLY debits the master's cash balance + records the OUT
+        # WalletTransaction — exactly like the Unfold admin and the cash-handover
+        # accept endpoint. Without this the endpoint only flipped the status and the
+        # balance never moved. The service's PENDING guard keeps it idempotent
+        # (re-PATCHing an already-approved request won't debit twice).
+        if instance.status == WithdrawRequest.PENDING and new_status == WithdrawRequest.APPROVED:
+            accept_cash_handover(instance, note=note)
+        elif instance.status == WithdrawRequest.PENDING and new_status == WithdrawRequest.REJECTED:
+            reject_cash_handover(instance, note=note)
+        else:
+            serializer.save()
+
 
 @extend_schema(
     tags=[DASHBOARD_EXPENSES_TAG],
@@ -1873,47 +1896,242 @@ class DashboardWarehouseExpenseDetailAPIView(DashboardPermissionMixin, EnvelopeM
     queryset = DashboardWarehouseExpense.objects.select_related("product").all()
 
 
+def _finance_int_param(request, name, default):
+    """Parse an int query param, raising a 400 (not 500) on a bad value."""
+    value = request.query_params.get(name)
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({name: f"{name} butun son bo'lishi kerak"}) from exc
+
+
+def _finance_month(request):
+    """Return (year, month|None) from query params. Default: current month; `period=year` -> month=None."""
+    today = default_target_date()
+    year = _finance_int_param(request, "year", today.year)
+    if request.query_params.get("period") == "year":
+        return year, None
+    month = _finance_int_param(request, "month", today.month)
+    if not 1 <= month <= 12:
+        raise ValidationError({"month": "month 1-12 oralig'ida bo'lishi kerak"})
+    return year, month
+
+
+def _finance_range(request):
+    """Return (date_from, date_to, limit) for donut / top-clients.
+
+    Default oraliq — tanlangan (yoki joriy) oy; `date_from`/`date_to` berilsa ustun turadi.
+    """
+    serializer = DateRangeQuerySerializer(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    year, month = _finance_month(request)
+    if month:
+        month_start = date(year, month, 1)
+        month_end = date(year, 12, 31) if month == 12 else date(year, month + 1, 1) - timedelta(days=1)
+    else:
+        month_start, month_end = date(year, 1, 1), date(year, 12, 31)
+    date_from = serializer.validated_data.get("date_from") or month_start
+    date_to = serializer.validated_data.get("date_to") or month_end
+    return date_from, date_to, serializer.validated_data["limit"]
+
+
+def _serialize_top_clients(clients, request):
+    results = []
+    for rank, client in enumerate(clients, start=1):
+        avatar = None
+        if client.avatar:
+            try:
+                avatar = request.build_absolute_uri(client.avatar.url)
+            except ValueError:
+                avatar = None
+        results.append(
+            {
+                "rank": rank,
+                "id": str(client.id),
+                "full_name": str(client),
+                "phone": client.phone,
+                "avatar": avatar,
+                "orders_count": client.completed_count,
+                "total_spent": money(client.completed_spent),
+                "total_spent_formatted": format_uzs(client.completed_spent),
+            }
+        )
+    return results
+
+
 @extend_schema(
     tags=[DASHBOARD_FINANCE_TAG],
     summary="Moliya summary",
-    description="Moliya hisobotlari sahifasidagi summary cardlar uchun yil bo'yicha daromad, xarajat, foyda va pending withdraw countni qaytaradi.",
+    description=(
+        "Moliya sahifasidagi Oylik daromad / Oylik xarajat / Sof foyda cardlari. Har biri qiymat, formatlangan "
+        "matn va o'tgan davrga nisbatan o'zgarish foizini (change_percent/direction) qaytaradi. "
+        "Default `period=month` (joriy oy). `period=year` — yillik. `year` va `month` bilan davr tanlanadi."
+    ),
+    parameters=[
+        OpenApiParameter("period", str, OpenApiParameter.QUERY, required=False, description="month (default) yoki year."),
+        OpenApiParameter("year", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("month", int, OpenApiParameter.QUERY, required=False, description="1-12 (period=month uchun)."),
+    ],
 )
 class DashboardFinanceSummaryAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
     def get(self, request):
-        year = int(request.query_params.get("year", timezone.localdate().year))
-        completed_orders = Order.objects.filter(status=OrderStatus.COMPLETED, updated_at__year=year)
-        master_expenses = MasterExpense.objects.filter(date__year=year)
-        company_expenses = DashboardCompanyExpense.objects.filter(date__year=year)
-        warehouse_expenses = DashboardWarehouseExpense.objects.filter(date__year=year)
-        data = {
-            "year": year,
-            "income": completed_orders.aggregate(total=Sum("total_amount"))["total"] or 0,
-            "master_expense": master_expenses.aggregate(total=Sum("amount"))["total"] or 0,
-            "company_expense": company_expenses.aggregate(total=Sum("amount"))["total"] or 0,
-            "warehouse_expense": warehouse_expenses.aggregate(total=Sum("amount"))["total"] or 0,
-            "orders_count": completed_orders.count(),
-            "withdraw_pending_count": WithdrawRequest.objects.filter(status=WithdrawRequest.PENDING).count(),
-        }
-        data["total_expense"] = data["master_expense"] + data["company_expense"] + data["warehouse_expense"]
-        data["profit"] = data["income"] - data["total_expense"]
-        return success_response(data)
+        year, month = _finance_month(request)
+        return success_response(get_finance_summary(year, month))
+
+
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Daromad xizmatlar kesimida (donut)",
+    description=(
+        "'Oylik daromada xizmatlar kesimida' donut charti uchun yakunlangan buyurtmalar daromadini "
+        "(Sum total_amount) xizmatlar bo'yicha taqsimlab qaytaradi. Default oraliq — joriy oy."
+    ),
+    parameters=[
+        OpenApiParameter("year", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("month", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("date_from", str, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("date_to", str, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("limit", int, OpenApiParameter.QUERY, required=False),
+    ],
+)
+class DashboardIncomeByServiceAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = DateRangeQuerySerializer
+
+    def get(self, request):
+        date_from, date_to, limit = _finance_range(request)
+        return success_response(get_income_by_service(date_from, date_to, limit))
+
+
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Eng faol mijozlar",
+    description=(
+        "'Eng faol mijozlar' jadvali uchun yakunlangan buyurtmalar soni va sarflagan summasi bo'yicha "
+        "top mijozlarni qaytaradi. Default oraliq — joriy oy; `date_from`/`date_to` bilan o'zgartirish mumkin."
+    ),
+    parameters=[
+        OpenApiParameter("year", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("month", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("date_from", str, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("date_to", str, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("limit", int, OpenApiParameter.QUERY, required=False, description="Nechta mijoz (default 10)."),
+    ],
+)
+class DashboardTopClientsAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = DateRangeQuerySerializer
+
+    def get(self, request):
+        date_from, date_to, limit = _finance_range(request)
+        clients = get_top_clients(date_from, date_to, limit)
+        results = _serialize_top_clients(clients, request)
+        return success_response({"count": len(results), "results": results})
 
 
 @extend_schema(
     tags=[DASHBOARD_FINANCE_TAG],
     summary="Moliya hisobot jadvali",
-    description="Moliya hisobotlari sahifasi uchun summary va oyma-oy income/expense chart ma'lumotlarini qaytaradi.",
+    description=(
+        "Moliya sahifasi uchun bitta so'rovda summary cardlar, oyma-oy income/expense chart, xizmatlar "
+        "kesimidagi daromad (donut) va eng faol mijozlar ma'lumotlarini qaytaradi."
+    ),
 )
 class DashboardFinanceReportAPIView(DashboardPermissionMixin, generics.GenericAPIView):
     serializer_class = EmptySerializer
 
     def get(self, request):
-        year = int(request.query_params.get("year", timezone.localdate().year))
-        data = get_income_expense(year)
-        summary = DashboardFinanceSummaryAPIView().get(request).data["data"]
-        return success_response({"summary": summary, "chart": data})
+        year, month = _finance_month(request)
+        date_from, date_to, limit = _finance_range(request)
+        return success_response(
+            {
+                "summary": get_finance_summary(year, month),
+                "chart": get_income_expense(year),
+                "income_by_service": get_income_by_service(date_from, date_to, limit),
+                "top_clients": _serialize_top_clients(get_top_clients(date_from, date_to, limit), request),
+            }
+        )
+
+
+@extend_schema(
+    tags=[DASHBOARD_FINANCE_TAG],
+    summary="Moliya hisobotni Excel'ga eksport qilish",
+    description=(
+        "'Export Excel' tugmasi uchun. Summary, oyma-oy daromad/xarajat, xizmatlar kesimidagi daromad va "
+        "eng faol mijozlarni `.xlsx` fayl ko'rinishida yuklab beradi."
+    ),
+    parameters=[
+        OpenApiParameter("year", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("month", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("period", str, OpenApiParameter.QUERY, required=False),
+    ],
+)
+class DashboardFinanceExportAPIView(DashboardPermissionMixin, generics.GenericAPIView):
+    serializer_class = EmptySerializer
+
+    def get(self, request):
+        from openpyxl import Workbook
+        from openpyxl.styles import Font
+
+        year, month = _finance_month(request)
+        date_from, date_to, limit = _finance_range(request)
+        summary = get_finance_summary(year, month)
+        chart = get_income_expense(year)
+        by_service = get_income_by_service(date_from, date_to, limit)
+        top_clients = get_top_clients(date_from, date_to, limit)
+        bold = Font(bold=True)
+
+        workbook = Workbook()
+
+        overview = workbook.active
+        overview.title = "Umumiy"
+        overview.append(["Davr", summary["label"]])
+        overview.append(["Ko'rsatkich", "Summa (so'm)", "O'zgarish %", "Yo'nalish"])
+        overview["A2"].font = bold
+        overview["B2"].font = bold
+        overview["C2"].font = bold
+        overview["D2"].font = bold
+        for key, title in (("income", "Daromad"), ("expense", "Xarajat"), ("profit", "Sof foyda")):
+            card = summary[key]
+            overview.append([title, card["value"], card["change_percent"], card["change_direction"]])
+        overview.append(["Yakunlangan buyurtmalar", summary["orders_count"]])
+        overview.append(["Tasdiqlanmagan naqd so'rovlar", summary["withdraw_pending_count"]])
+
+        monthly = workbook.create_sheet("Oyma-oy")
+        monthly.append(["Oy", "Daromad (mln)", "Xarajat (mln)"])
+        for cell in ("A1", "B1", "C1"):
+            monthly[cell].font = bold
+        for item in chart["items"]:
+            monthly.append([item["label"], item["income"], item["expense"]])
+
+        services_sheet = workbook.create_sheet("Xizmatlar kesimida")
+        services_sheet.append(["Xizmat", "Daromad (so'm)", "Ulush %"])
+        for cell in ("A1", "B1", "C1"):
+            services_sheet[cell].font = bold
+        for item in by_service["items"]:
+            services_sheet.append([item["service_name"], item["income"], item["percent"]])
+
+        clients_sheet = workbook.create_sheet("Eng faol mijozlar")
+        clients_sheet.append(["#", "Mijoz", "Telefon", "Buyurtmalar", "Sarflagan (so'm)"])
+        for cell in ("A1", "B1", "C1", "D1", "E1"):
+            clients_sheet[cell].font = bold
+        for rank, client in enumerate(top_clients, start=1):
+            clients_sheet.append(
+                [rank, str(client), client.phone, client.completed_count, money(client.completed_spent)]
+            )
+
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+        suffix = f"{year}-{month:02d}" if month else str(year)
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = f'attachment; filename="moliya-hisobot-{suffix}.xlsx"'
+        return response
 
 
 @extend_schema(

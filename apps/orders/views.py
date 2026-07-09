@@ -148,6 +148,7 @@ class MasterHomeStatsView(generics.GenericAPIView):
             "wallet": {
                 "balance_online": wallet.balance_online,
                 "balance_cash": wallet.balance_cash,
+                "total_balance": wallet.total_balance,
                 "total_earned": wallet.total_earned,
                 "total_withdrawn": wallet.total_withdrawn,
             },
@@ -262,14 +263,7 @@ class MasterOrderAcceptView(generics.GenericAPIView):
             order.status = OrderStatus.ACCEPTED
             order.save(update_fields=["master", "status", "updated_at"])
             ensure_tracking(order)
-            create_notification(
-                role="client",
-                client=order.client,
-                title="Buyurtma qabul qilindi",
-                body=f"{request.user.full_name} buyurtmangizni qabul qildi",
-                data={"order_id": str(order.id), "status": order.status},
-            )
-            # Status broadcast is handled centrally by the Order post_save signal.
+            # The client status notification is fired centrally by the Order post_save signal.
         if not assignment.has_accepted:
             assignment.has_accepted = True
             assignment.save(update_fields=["has_accepted", "updated_at"])
@@ -294,14 +288,7 @@ class MasterOrderOnWayView(generics.GenericAPIView):
         order.status = OrderStatus.ON_WAY
         order.save(update_fields=["status", "updated_at"])
         ensure_tracking(order)
-        create_notification(
-            role="client",
-            client=order.client,
-            title="Usta yo'lda",
-            body="Usta buyurtma manziliga yo'lga chiqdi",
-            data={"order_id": str(order.id), "status": order.status},
-        )
-        # Status broadcast is handled centrally by the Order post_save signal.
+        # The client status notification is fired centrally by the Order post_save signal.
         return success_response(OrderSerializer(order).data)
 
 
@@ -312,15 +299,8 @@ class MasterOrderOnWayView(generics.GenericAPIView):
         "Lead usta manzilga yetib borgach order statusini `arrived` qiladi va client tracking socketiga yuboradi. "
         "Status `on_way` -> `arrived`. Multipart request bilan `before_photo` optional yuboriladi."
     ),
-    request=OrderStartSerializer,
+    request={"multipart/form-data": OrderStartSerializer},
     responses=OrderSerializer,
-    examples=[
-        OpenApiExample(
-            "Arrived multipart fields",
-            value={"before_photo": "file"},
-            request_only=True,
-        )
-    ],
 )
 class MasterOrderStartView(generics.GenericAPIView):
     permission_classes = [IsMaster]
@@ -328,20 +308,11 @@ class MasterOrderStartView(generics.GenericAPIView):
 
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, master=request.user)
-        was_arrived = order.status == OrderStatus.ARRIVED
         serializer = self.get_serializer(data=request.data, context={"order": order})
         serializer.is_valid(raise_exception=True)
         order = serializer.save()
         ensure_tracking(order)
-        if not was_arrived:
-            create_notification(
-                role="client",
-                client=order.client,
-                title="Usta yetib keldi",
-                body="Usta buyurtma manziliga yetib keldi",
-                data={"order_id": str(order.id), "status": order.status},
-            )
-            # Status broadcast is handled centrally by the Order post_save signal.
+        # The client status notification is fired centrally by the Order post_save signal.
         return success_response(OrderSerializer(order).data)
 
 
@@ -357,14 +328,7 @@ class MasterOrderRejectView(generics.GenericAPIView):
         order.status = OrderStatus.REJECTED
         order.rejected_reason = serializer.validated_data["reason"]
         order.save(update_fields=["status", "rejected_reason", "updated_at"])
-        create_notification(
-            role="client",
-            client=order.client,
-            title="Buyurtma rad etildi",
-            body=order.rejected_reason,
-            data={"order_id": str(order.id), "status": order.status},
-        )
-        # Status broadcast is handled centrally by the Order post_save signal.
+        # The client status notification is fired centrally by the Order post_save signal.
         return success_response(OrderSerializer(order).data)
 
 
@@ -376,6 +340,7 @@ class MasterOrderRejectView(generics.GenericAPIView):
         "`used_items` inventory ishlatilgan bo'lsa JSON string/list sifatida yuboriladi. Yakunlanganda order total, "
         "wallet transaction va client notification yangilanadi."
     ),
+    request={"multipart/form-data": OrderCompleteSerializer},
     examples=[
         OpenApiExample(
             "Complete order multipart fields",
@@ -398,20 +363,7 @@ class MasterOrderCompleteView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         order = serializer.save()
         wallet = getattr(request.user, "wallet", None)
-        create_notification(
-            role="client",
-            client=order.client,
-            title="Buyurtma yakunlandi",
-            body="Usta buyurtmani yakunladi. Check yuklab olishga tayyor.",
-            data={
-                "order_id": str(order.id),
-                "status": order.status,
-                "total_amount": str(order.total_amount),
-                "receipt_available": True,
-                "receipt_download_url": receipt_download_url(request, order),
-            },
-        )
-        # Status broadcast is handled centrally by the Order post_save signal.
+        # The client status notification is fired centrally by the Order post_save signal.
         return success_response(
             {
                 "order": OrderSerializer(order, context={"request": request}).data,
@@ -704,15 +656,10 @@ class ClientOrderListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
     def perform_create(self, serializer):
         order = serializer.save(client=self.request.user)
         ensure_tracking(order)
-        masters = Master.objects.filter(is_active=True, is_online=True, is_available=True)[:50]
-        for master in masters:
-            create_notification(
-                role="master",
-                master=master,
-                title="Yangi buyurtma",
-                body=order.address_text,
-                data={"order_id": str(order.id), "status": order.status},
-            )
+        # No fan-out to online masters: this is an admin-assign model, so a new
+        # order goes to nobody until an admin assigns it. The assign flow
+        # (DashboardOrderAssignSerializer / admin) notifies ONLY the chosen
+        # master(s) — a master's order info never reaches other masters.
 
 
 @extend_schema_view(get=extend_schema(tags=["Client Orders"]))

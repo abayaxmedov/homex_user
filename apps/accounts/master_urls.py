@@ -27,6 +27,8 @@ urlpatterns = [
     path("profile/settings/", views.MasterSettingsView.as_view(), name="master-settings"),
     path("profile/", include("apps.profiles.master_urls")),
     path("push/register/", views.MasterPushRegisterView.as_view(), name="master-push-register"),
+    # DB-backed admin notifications (list/read/read-all). Realtime status events are
+    # separate: DB-less, delivered only over ws/master/notifications/ + FCM.
     path("notifications/", include("apps.notifications.master_urls")),
     path("support/", include("apps.support.master_urls")),
     path("privacy-policy/", include("apps.profiles.privacy_urls")),

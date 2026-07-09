@@ -5,10 +5,12 @@ from channels.layers import get_channel_layer
 
 from apps.accounts.serializers import MasterSummarySerializer
 from apps.common.geo import distance_km, eta_minutes
+from apps.common.realtime import json_safe  # noqa: F401 (re-exported for consumers)
 from apps.orders.models import ACTIVE_ORDER_STATUSES, Order, OrderStatus, OrderTracking
 
 
 logger = logging.getLogger(__name__)
+
 
 # Statuses whose orders should keep receiving the master's live location.
 ACTIVE_TRACKING_STATUSES = ACTIVE_ORDER_STATUSES
@@ -119,7 +121,9 @@ def tracking_payload(order):
             "client_track": f"/ws/client/track/{order.id}/",
             "master_tracking": "/ws/master/tracking/",
             "auth_header": "Authorization: Bearer {access_token}",
-            "events": ["tracking.snapshot", "tracking.update", "master.location"],
+            # Tracking socket carries only the snapshot + the master's live location.
+            # Status changes arrive on the notification socket instead.
+            "events": ["tracking.snapshot", "master.location"],
         },
     }
 
@@ -178,7 +182,7 @@ def broadcast_tracking(order, payload=None, event_type="tracking.update"):
             {
                 "type": "tracking.update",
                 "event": event_type,
-                "payload": payload or tracking_payload(order),
+                "payload": json_safe(payload or tracking_payload(order)),
             },
         )
     except Exception:
