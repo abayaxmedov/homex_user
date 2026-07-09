@@ -168,6 +168,11 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardPageNumberPagination",
     "EXCEPTION_HANDLER": "apps.common.exceptions.homex_exception_handler",
+    "DEFAULT_THROTTLE_RATES": {
+        # Per-IP limits for the anonymous OTP-send endpoint (real, billed SMS).
+        "otp": os.getenv("OTP_THROTTLE_BURST", "5/min"),
+        "otp_day": os.getenv("OTP_THROTTLE_DAY", "50/day"),
+    },
 }
 
 LOGGING = {
@@ -253,6 +258,13 @@ FIREBASE_CREDENTIALS_PATH = os.getenv("FIREBASE_CREDENTIALS_PATH", "")
 FIREBASE_CREDENTIALS_JSON = os.getenv("FIREBASE_CREDENTIALS_JSON", "")
 FIREBASE_CREDENTIALS_B64 = os.getenv("FIREBASE_CREDENTIALS_B64", "")
 FIREBASE_APP_NAME = os.getenv("FIREBASE_APP_NAME", "[DEFAULT]")
+
+# Eskiz SMS (OTP). Real SMS jo'natish uchun: SMS_PROVIDER=eskiz + SMS_EMAIL/SMS_PASSWORD.
+# "stub" (default) — dev/test uchun, tarmoqqa chiqmaydi.
+SMS_PROVIDER = os.getenv("SMS_PROVIDER", "stub").lower()
+SMS_EMAIL = os.getenv("SMS_EMAIL", "")
+SMS_PASSWORD = os.getenv("SMS_PASSWORD", "")
+SMS_FROM = os.getenv("SMS_FROM", "4546")
 
 UNFOLD = {
     "SITE_TITLE": "HomeX Admin",

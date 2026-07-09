@@ -11,7 +11,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import Client, FCMDevice, Language, Master, MasterApprovalStatus, OTPRecord
 from apps.accounts.tokens import issue_role_tokens
-from apps.integrations.adapters import SMSClient
+from apps.common.phone import normalize_phone
+from apps.integrations.adapters import send_otp_async
 
 
 class MasterSummarySerializer(serializers.ModelSerializer):
@@ -200,19 +201,23 @@ class SendOTPSerializer(serializers.Serializer):
     phone = serializers.CharField()
 
     def validate_phone(self, value):
-        key = f"otp:cooldown:{value}"
-        if cache.get(key):
+        # Normalize first so every format variant (+998.., 998.., dashes) collapses
+        # to ONE cooldown key — otherwise the per-phone cooldown is trivially bypassed.
+        value = normalize_phone(value)
+        if cache.get(f"otp:cooldown:{value}"):
             raise serializers.ValidationError("OTP so'rovi uchun 3 daqiqa kuting")
         return value
 
     def create(self, validated_data):
-        phone = validated_data["phone"]
+        phone = validated_data["phone"]  # already normalized in validate_phone
         code = f"{random.randint(0, 999999):06d}"
         expires_at = timezone.now() + timedelta(seconds=settings.OTP_TTL_SECONDS)
         OTPRecord.objects.create(phone=phone, code=code, expires_at=expires_at)
         cache.set(f"otp:{phone}", {"code": code, "attempts": 0}, timeout=settings.OTP_TTL_SECONDS)
         cache.set(f"otp:cooldown:{phone}", True, timeout=settings.OTP_SEND_COOLDOWN_SECONDS)
-        SMSClient().send_otp(phone, code)
+        # Dispatch off the request path: a slow/unreachable Eskiz must not block the
+        # shared ASGI worker thread (would freeze the whole API).
+        send_otp_async(phone, code)
         return {"phone": phone, "expires_in": settings.OTP_TTL_SECONDS}
 
 
@@ -221,7 +226,8 @@ class VerifyOTPSerializer(serializers.Serializer):
     otp_code = serializers.CharField(min_length=6, max_length=6)
 
     def validate(self, attrs):
-        phone = attrs["phone"]
+        phone = normalize_phone(attrs["phone"])  # same canonical form as send-otp
+        attrs["phone"] = phone
         if cache.get(f"otp:block:{phone}"):
             raise serializers.ValidationError("Ko'p noto'g'ri urinish. 15 daqiqa kuting")
         payload = cache.get(f"otp:{phone}")

@@ -41,6 +41,9 @@ services:
       dockerfile: Dockerfile
     # Run the shell explicitly so no exec bit is required on the mounted file.
     entrypoint: ["sh", "/app/docker/entrypoint.local.sh"]
+    # .env brings in SMS_* (Eskiz OTP creds) etc. The inline `environment` below
+    # overrides overlapping keys (DB/redis/debug) so local wiring stays correct.
+    env_file: .env
     environment:
       DJANGO_DEBUG: "1"
       DJANGO_SECRET_KEY: "local-dev-secret-key-please-change-32bytes+"
@@ -50,6 +53,11 @@ services:
       BACKEND_PORT: "8000"
     ports:
       - "8000:8000"
+    # Stable public DNS — mobile-hotspot DNS is flaky and intermittently fails to
+    # resolve external hosts (e.g. notify.eskiz.uz) inside the container.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - .:/app          # live code reload (backups -> ./backups on host)
     depends_on:

@@ -65,6 +65,31 @@ def test_otp_send_and_verify_creates_client(db):
     assert tokens["client"]["phone"] == "+998900000001"
 
 
+def test_otp_cooldown_is_format_independent(db):
+    # Every format variant of one number now collapses to a single cooldown key,
+    # so the 180s cooldown can't be bypassed by reformatting the phone.
+    first = SendOTPSerializer(data={"phone": "+998900000009"})
+    assert first.is_valid(), first.errors
+    first.save()
+
+    variant = SendOTPSerializer(data={"phone": "998-900-000-009"})  # same handset
+    assert not variant.is_valid()
+    assert "phone" in variant.errors
+
+
+def test_send_otp_endpoint_is_ip_throttled(db):
+    # The unauthenticated, real-SMS endpoint must be rate-limited per IP (distinct
+    # phones bypass the per-phone cooldown but not the per-IP burst throttle).
+    cache.clear()
+    api = APIClient()
+    statuses = [
+        api.post(reverse("client-send-otp"), {"phone": f"+99890010{n:04d}"}, format="json").status_code
+        for n in range(7)
+    ]
+    assert 429 in statuses  # burst limit kicked in
+    assert statuses.count(200) <= 5
+
+
 def test_otp_blocks_after_five_wrong_attempts(settings, db):
     phone = "+998900000002"
     OTPRecord.objects.create(phone=phone, code="111111", expires_at=timezone.now() + timezone.timedelta(minutes=2))
