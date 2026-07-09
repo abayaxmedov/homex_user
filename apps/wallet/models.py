@@ -10,6 +10,12 @@ class MasterWallet(TimeStampedUUIDModel):
     total_earned = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total_withdrawn = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
+    @property
+    def total_balance(self):
+        """Umumiy (spendable) balans = naqd + online. Alohida stored maydon yo'q,
+        shuning uchun naqd yechilganda (balance_cash kamayganda) bu ham kamayadi."""
+        return self.balance_cash + self.balance_online
+
     def __str__(self):
         return f"{self.master} wallet"
 

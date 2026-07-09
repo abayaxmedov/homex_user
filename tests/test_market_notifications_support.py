@@ -112,33 +112,71 @@ def test_market_products_can_be_filtered_by_category_and_searched(client_api):
     assert counts == {"qismlar": 1, "uskunalar": 1}
 
 
-def test_notifications_can_be_read_by_role(client_api, master_api, client_user, master):
-    client_notification = Notification.objects.create(
-        role="client",
-        client=client_user,
-        title="Buyurtma",
-        body="Qabul qilindi",
-    )
-    master_notification = Notification.objects.create(
-        role="master",
-        master=master,
-        title="Yangi buyurtma",
-        body="Sizga buyurtma biriktirildi",
+def test_socket_notifications_are_realtime_only_and_not_persisted(client_user, master):
+    """System A (socket notifications): active-order/status events are delivered
+    over the WS group + FCM to BOTH roles and are NEVER written to the DB, so they
+    never surface in the persisted admin-notification list.
+    """
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    from apps.notifications.services import notification_group
+
+    channel_layer = get_channel_layer()
+    client_channel = async_to_sync(channel_layer.new_channel)()
+    master_channel = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(notification_group("client", client_user.id), client_channel)
+    async_to_sync(channel_layer.group_add)(notification_group("master", master.id), master_channel)
+
+    before = Notification.objects.count()
+    create_notification(role="client", client=client_user, title="Buyurtma", body="Qabul qilindi")
+    create_notification(role="master", master=master, title="Yangi buyurtma", body="Sizga buyurtma biriktirildi")
+
+    client_event = async_to_sync(channel_layer.receive)(client_channel)
+    master_event = async_to_sync(channel_layer.receive)(master_channel)
+
+    assert client_event["event"] == "notification.created"
+    assert client_event["payload"]["title"] == "Buyurtma"
+    assert master_event["payload"]["title"] == "Yangi buyurtma"
+    # DB-less: nothing was persisted.
+    assert Notification.objects.count() == before
+
+
+def test_admin_db_notifications_are_listed_and_readable_socket_ones_are_not(client_api, master_api, client_user, master):
+    """System B (admin/DB notifications): admin-authored notifications ARE persisted
+    and exposed via the REST list/read endpoints with unread state — kept SEPARATE
+    from the DB-less realtime status stream (System A), which must not appear here.
+    """
+    # System B: admin-authored, persisted.
+    client_admin = Notification.objects.create(role="client", client=client_user, title="Admin e'lon", body="hammaga")
+    master_admin = Notification.objects.create(role="master", master=master, title="Admin e'lon", body="ustalarga")
+    # System A: realtime status, DB-less — must NOT leak into the REST list.
+    create_notification(
+        role="client", client=client_user, title="Usta yo'lda", event="order.status",
+        data={"order_id": "x", "status": "on_way"},
     )
 
     client_list = client_api.get(reverse("client-notifications"))
-    client_read = client_api.patch(reverse("client-notification-read", args=[client_notification.id]))
     master_list = master_api.get(reverse("master-notifications"))
-    master_read = master_api.patch(reverse("master-notification-read", args=[master_notification.id]))
+    assert client_list.status_code == 200 and master_list.status_code == 200
 
-    assert client_list.status_code == 200
-    assert client_read.status_code == 200
-    assert master_list.status_code == 200
-    assert master_read.status_code == 200
-    client_notification.refresh_from_db()
-    master_notification.refresh_from_db()
-    assert client_notification.is_read is True
-    assert master_notification.is_read is True
+    def titles(resp):
+        body = resp.data.get("results")
+        if body is None:
+            body = resp.data.get("data", resp.data)
+        return [n["title"] for n in body]
+
+    assert "Admin e'lon" in titles(client_list)
+    assert "Usta yo'lda" not in titles(client_list)  # the socket/status event is not persisted or listed
+    assert "Admin e'lon" in titles(master_list)
+
+    # read marks the persisted admin notification (System B) as read.
+    read = client_api.patch(reverse("client-notification-read", args=[client_admin.id]))
+    assert read.status_code == 200
+    client_admin.refresh_from_db()
+    assert client_admin.is_read is True
+    master_admin.refresh_from_db()  # untouched
+    assert master_admin.is_read is False
 
 
 def test_client_push_register_is_idempotent(client_api, client_user):
@@ -165,7 +203,9 @@ def test_client_push_register_is_idempotent(client_api, client_user):
     assert client_user.fcm_token == "client-fcm-token"
 
 
-def test_create_notification_sends_push_to_active_devices(monkeypatch, client_user):
+def test_create_notification_sends_push_to_active_devices(
+    monkeypatch, client_user, django_capture_on_commit_callbacks
+):
     sent = {}
 
     class FakePushClient:
@@ -182,13 +222,15 @@ def test_create_notification_sends_push_to_active_devices(monkeypatch, client_us
         is_active=False,
     )
 
-    notification = create_notification(
-        role="client",
-        client=client_user,
-        title="Buyurtma",
-        body="Qabul qilindi",
-        data={"order_id": "123"},
-    )
+    # The push is deferred to transaction.on_commit, so run the callbacks.
+    with django_capture_on_commit_callbacks(execute=True):
+        notification = create_notification(
+            role="client",
+            client=client_user,
+            title="Buyurtma",
+            body="Qabul qilindi",
+            data={"order_id": "123"},
+        )
 
     assert sent["tokens"] == ["active-token"]
     assert sent["title"] == "Buyurtma"

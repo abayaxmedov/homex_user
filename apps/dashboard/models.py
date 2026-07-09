@@ -126,3 +126,40 @@ class DashboardIntegrationSetting(TimeStampedUUIDModel):
 
     def __str__(self):
         return self.title
+
+
+class DashboardBackup(TimeStampedUUIDModel):
+    """A full database dump (.sql) stored under ``settings.BACKUP_ROOT``.
+
+    The file itself lives on disk (private, not in MEDIA); this row holds the
+    metadata and is what the download endpoint resolves.
+    """
+
+    MANUAL = "manual"
+    AUTO = "auto"
+    SOURCES = ((MANUAL, "Qo'lda"), (AUTO, "Avtomatik"))
+
+    filename = models.CharField(max_length=255, unique=True)
+    size_bytes = models.BigIntegerField(default=0)
+    engine = models.CharField(max_length=40, blank=True, help_text="postgresql / sqlite")
+    source = models.CharField(max_length=10, choices=SOURCES, default=MANUAL)
+    note = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return self.filename
+
+    @property
+    def path(self):
+        from django.conf import settings as dj_settings
+
+        return dj_settings.BACKUP_ROOT / self.filename
+
+    @property
+    def exists(self):
+        return self.path.exists()

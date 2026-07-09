@@ -67,6 +67,7 @@ class WalletStatsView(generics.GenericAPIView):
                 "total_income": total,
                 "balance_online": wallet.balance_online,
                 "balance_cash": wallet.balance_cash,
+                "total_balance": wallet.total_balance,
                 "total_earned": wallet.total_earned,
                 "total_withdrawn": wallet.total_withdrawn,
                 "pending_withdraw": pending_withdraw,

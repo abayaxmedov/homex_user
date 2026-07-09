@@ -53,7 +53,7 @@ Ekranlar (Figma frame nomlari orqali tasdiqlangan): Auth · Home (+ Order Status
 | Receipt (chek) | `client-order-receipt-download` | ✅ |
 | **SOS** | — | ❌ **API yo'q** (dizaynda bor) |
 | **Live View** | — | ❌ **client API yo'q** (jonli faqat dashboardda) |
-| Notifications | `client-notifications/read/read-all` | ✅ |
+| Notifications | Admin (DB): `client-notifications/read/read-all` + unread count. Order status realtime: `/ws/client/notifications/` (WS) + FCM, DB'siz — alohida tizim. | ✅ |
 | My tools (Uskunalar) | `client-devices/device-locations/device-order` | ✅ |
 | Market / Sell / Search | `client-market-products/orders/favorites/listing-create/categories/search` (`?category`, orders+favorites `?category`🆕) | ✅ |
 | Profile / Edit / Language | `client-profile` | ✅ |

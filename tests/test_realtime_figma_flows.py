@@ -68,6 +68,10 @@ def test_master_accepts_assigned_order(master_api, master, client_user, service)
     order = make_order(client_user, service)
     assign_master(order, master)  # admin assigns
 
+    channel_layer = get_channel_layer()
+    client_channel = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(notification_group("client", client_user.id), client_channel)
+
     list_response = master_api.get(reverse("master-orders"), {"tab": "yangi"})
     accept_response = master_api.post(reverse("master-order-accept", args=[order.id]))
 
@@ -80,7 +84,11 @@ def test_master_accepts_assigned_order(master_api, master, client_user, service)
     assert order.master == master  # first to accept becomes the lead
     assert order.status == OrderStatus.ACCEPTED
     assert order.assigned_masters.get(master=master).has_accepted is True
-    assert Notification.objects.filter(client=client_user, data__order_id=str(order.id)).exists()
+    # The client learns of the new status in realtime over the notification socket.
+    event = async_to_sync(channel_layer.receive)(client_channel)
+    assert event["event"] == "order.status"
+    assert event["payload"]["data"]["status"] == OrderStatus.ACCEPTED
+    assert event["payload"]["data"]["order_id"] == str(order.id)
 
 
 def test_master_cannot_accept_unassigned_order(master_api, master, client_user, service):
@@ -144,28 +152,29 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
     assert completed_track.data["data"]["receipt_available"] is True
 
 
-def test_tracking_socket_receives_status_on_master_accept(master_api, master, client_user, service):
+def test_notification_socket_receives_status_on_master_accept(master_api, master, client_user, service):
     order = make_order(client_user, service)
     assign_master(order, master)
     channel_layer = get_channel_layer()
     channel_name = async_to_sync(channel_layer.new_channel)()
-    async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
+    async_to_sync(channel_layer.group_add)(notification_group("client", client_user.id), channel_name)
 
     response = master_api.post(reverse("master-order-accept", args=[order.id]))
     event = async_to_sync(channel_layer.receive)(channel_name)
 
     assert response.status_code == 200
-    assert event["type"] == "tracking.update"
-    assert event["payload"]["status"] == OrderStatus.ACCEPTED
-    assert event["payload"]["tracking_status"] == "master_accepted"
+    assert event["event"] == "order.status"
+    assert event["payload"]["data"]["status"] == OrderStatus.ACCEPTED
+    assert event["payload"]["data"]["status_tab"] == "bajarilmoqda"
+    assert event["payload"]["data"]["order_id"] == str(order.id)
 
 
-def test_tracking_socket_receives_full_status_flow(master_api, master, client_user, service):
+def test_notification_socket_receives_full_status_flow(master_api, master, client_user, service):
     order = make_order(client_user, service)
     assign_master(order, master)
     channel_layer = get_channel_layer()
     channel_name = async_to_sync(channel_layer.new_channel)()
-    async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
+    async_to_sync(channel_layer.group_add)(notification_group("client", client_user.id), channel_name)
 
     master_api.post(reverse("master-order-accept", args=[order.id]))
     accepted = async_to_sync(channel_layer.receive)(channel_name)
@@ -180,17 +189,31 @@ def test_tracking_socket_receives_full_status_flow(master_api, master, client_us
     )
     completed = async_to_sync(channel_layer.receive)(channel_name)
 
-    # Every transition reaches the tracking socket with a distinct status.
-    assert accepted["payload"]["tracking_status"] == "master_accepted"
-    assert on_way["payload"]["tracking_status"] == "master_on_way"
-    assert arrived["payload"]["tracking_status"] == "master_arrived"
-    assert completed["payload"]["tracking_status"] == "master_finished"
+    # Every transition reaches the client's notification socket in realtime.
+    assert [e["event"] for e in (accepted, on_way, arrived, completed)] == ["order.status"] * 4
     assert [
-        accepted["payload"]["status"],
-        on_way["payload"]["status"],
-        arrived["payload"]["status"],
-        completed["payload"]["status"],
+        accepted["payload"]["data"]["status"],
+        on_way["payload"]["data"]["status"],
+        arrived["payload"]["data"]["status"],
+        completed["payload"]["data"]["status"],
     ] == [OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED, OrderStatus.COMPLETED]
+
+
+def test_status_change_also_notifies_assigned_masters(master_api, master, client_user, service):
+    """System A fans every status change out to the assigned master(s) too, not just
+    the client — so the lead master and assistants stay in realtime sync."""
+    order = make_order(client_user, service)
+    assign_master(order, master)
+    channel_layer = get_channel_layer()
+    master_channel = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(notification_group("master", master.id), master_channel)
+
+    master_api.post(reverse("master-order-accept", args=[order.id]))
+    event = async_to_sync(channel_layer.receive)(master_channel)
+
+    assert event["event"] == "order.status"
+    assert event["payload"]["data"]["status"] == OrderStatus.ACCEPTED
+    assert event["payload"]["data"]["order_id"] == str(order.id)
 
 
 def test_dashboard_assign_masters_notifies_without_status_change(admin_api, master, client_user, service):
@@ -199,8 +222,10 @@ def test_dashboard_assign_masters_notifies_without_status_change(admin_api, mast
     # NOT emit a tracking status event.
     order = make_order(client_user, service)
     channel_layer = get_channel_layer()
-    channel_name = async_to_sync(channel_layer.new_channel)()
-    async_to_sync(channel_layer.group_add)(tracking_group(order.id), channel_name)
+    track_channel = async_to_sync(channel_layer.new_channel)()
+    master_channel = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(tracking_group(order.id), track_channel)
+    async_to_sync(channel_layer.group_add)(notification_group("master", master.id), master_channel)
 
     response = admin_api.patch(
         reverse("dashboard-order-assign", args=[order.id]),
@@ -212,11 +237,14 @@ def test_dashboard_assign_masters_notifies_without_status_change(admin_api, mast
     assert response.status_code == 200
     assert order.status == OrderStatus.NEW  # not accepted yet
     assert order.assigned_masters.filter(master=master, is_active=True).exists()
-    assert Notification.objects.filter(master=master, data__order_id=str(order.id)).exists()
+    # The assigned master is notified in realtime (no DB row).
+    master_event = async_to_sync(channel_layer.receive)(master_channel)
+    assert master_event["payload"]["data"]["order_id"] == str(order.id)
 
+    # Assignment does not change status, so the tracking socket stays silent.
     async def _expect_empty():
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(channel_layer.receive(channel_name), timeout=0.2)
+            await asyncio.wait_for(channel_layer.receive(track_channel), timeout=0.2)
 
     async_to_sync(_expect_empty)()
 
@@ -238,9 +266,33 @@ def test_tracking_socket_silent_without_status_change(master, client_user, servi
     async_to_sync(_expect_empty)()
 
 
-def test_client_tracking_consumer_forwards_status_updates():
-    # The consumer must forward every broadcast status (not just the connect-time
-    # snapshot) to the client, carrying the full status payload.
+def test_notification_socket_silent_without_status_change(master, client_user, service):
+    """The client notification group (sole realtime carrier of status) must stay
+    silent unless the status actually changes — guards the from_db/_loaded_status
+    marker against phantom/duplicate order.status events on unrelated saves."""
+    order = make_order(client_user, service, master=master, status=OrderStatus.ACCEPTED)
+    channel_layer = get_channel_layer()
+    channel_name = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(notification_group("client", client_user.id), channel_name)
+
+    async def _expect_empty():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(channel_layer.receive(channel_name), timeout=0.2)
+
+    # A non-status field change must not emit an order.status notification...
+    order.note = "keyinroq keling"
+    order.save(update_fields=["note", "updated_at"])
+    async_to_sync(_expect_empty)()
+
+    # ...nor a re-save with an unchanged status.
+    order.status = OrderStatus.ACCEPTED
+    order.save(update_fields=["status", "updated_at"])
+    async_to_sync(_expect_empty)()
+
+
+def test_client_tracking_consumer_forwards_master_location():
+    # The tracking socket forwards the master's live-location broadcasts to the
+    # client (status now travels on the notification socket, not here).
     consumer = ClientTrackingConsumer()
     captured = {}
 
@@ -250,20 +302,18 @@ def test_client_tracking_consumer_forwards_status_updates():
     consumer.send = fake_send
     event = {
         "type": "tracking.update",
-        "event": "tracking.update",
+        "event": "master.location",
         "payload": {
             "order_id": "order-1",
-            "status": "completed",
-            "tracking_status": "master_finished",
+            "master_location": {"lat": "41.31", "lng": "69.24"},
         },
     }
 
     async_to_sync(consumer.tracking_update)(event)
 
     data = json.loads(captured["text"])
-    assert data["type"] == "tracking.update"
-    assert data["data"]["status"] == "completed"
-    assert data["data"]["tracking_status"] == "master_finished"
+    assert data["type"] == "master.location"
+    assert data["data"]["master_location"]["lat"] == "41.31"
 
 
 def test_client_receipt_download_requires_master_confirmation(client_api, master_api, master, client_user, service):
@@ -356,21 +406,42 @@ def test_nearby_masters_return_distance_and_eta(client_api, master):
     assert response.data["data"][0]["eta_minutes"] is not None
 
 
-def test_notification_realtime_group_receives_create_and_read(client_api, client_user):
+def test_notification_realtime_group_receives_create(client_user):
     channel_layer = get_channel_layer()
     channel_name = async_to_sync(channel_layer.new_channel)()
     async_to_sync(channel_layer.group_add)(notification_group("client", client_user.id), channel_name)
 
+    before = Notification.objects.count()
     notification = create_notification(role="client", client=client_user, title="Test", body="Realtime")
     created_event = async_to_sync(channel_layer.receive)(channel_name)
-    read_response = client_api.patch(reverse("client-notification-read", args=[notification.id]))
-    read_event = async_to_sync(channel_layer.receive)(channel_name)
 
     assert created_event["event"] == "notification.created"
     assert created_event["payload"]["id"] == str(notification.id)
-    assert read_response.status_code == 200
-    assert read_event["event"] == "notification.read"
-    assert read_event["payload"]["is_read"] is True
+    # DB-less: realtime delivery only, nothing persisted (no in-app history).
+    assert Notification.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_notification_payload_is_redis_serializable(client_user):
+    """Regression: notification broadcasts must survive the Redis (msgpack) layer.
+
+    NotificationSerializer's client/master PrimaryKeyRelatedFields return raw
+    UUIDs, which channels_redis (msgpack) cannot pack. notification_payload()
+    must normalize them, exactly like the tracking payload does.
+    """
+    import msgpack
+
+    from apps.notifications.serializers import NotificationSerializer
+    from apps.notifications.services import notification_payload
+
+    notification = Notification(role="client", client=client_user, title="X", body="Y")
+
+    # Raw serializer output carries UUIDs -> not msgpack-serializable.
+    with pytest.raises(TypeError):
+        msgpack.packb(NotificationSerializer(notification).data)
+
+    # notification_payload() normalizes it so the Redis channel layer can pack it.
+    msgpack.packb(notification_payload(notification))  # must not raise
 
 
 def test_support_rest_broadcasts_realtime_event(client_api, client_user):

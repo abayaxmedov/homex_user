@@ -51,7 +51,42 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/app          # live code reload
+      - .:/app          # live code reload (backups -> ./backups on host)
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Celery worker + beat let you test the weekly auto-backup locally.
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["sh", "/app/docker/celery.sh"]
+    environment:
+      DJANGO_SECRET_KEY: "local-dev-secret-key-please-change-32bytes+"
+      DATABASE_URL: "postgres://homex:homex@db:5432/homex"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["sh", "/app/docker/beat.sh"]
+    environment:
+      DJANGO_SECRET_KEY: "local-dev-secret-key-please-change-32bytes+"
+      DATABASE_URL: "postgres://homex:homex@db:5432/homex"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - .:/app
     depends_on:
       db:
         condition: service_healthy

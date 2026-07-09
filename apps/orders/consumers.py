@@ -10,6 +10,7 @@ from apps.common.geo import to_decimal
 from apps.orders.models import Order
 from apps.orders.tracking import (
     ensure_tracking,
+    json_safe,
     refresh_master_order_tracking,
     tracking_group,
     tracking_payload,
@@ -113,7 +114,7 @@ class MasterTrackingConsumer(AsyncWebsocketConsumer):
         for group_name, group_payload in result["broadcasts"]:
             await self.channel_layer.group_send(
                 group_name,
-                {"type": "tracking.update", "event": "master.location", "payload": group_payload},
+                {"type": "tracking.update", "event": "master.location", "payload": json_safe(group_payload)},
             )
         await self.send(
             text_data=json.dumps({"type": "master.location.saved", "data": result["ack"]}, cls=DjangoJSONEncoder)

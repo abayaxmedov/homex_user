@@ -5,10 +5,10 @@ from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncDate, TruncMonth
 from django.utils import timezone
 
-from apps.accounts.models import Master
+from apps.accounts.models import Client, Master
 from apps.dashboard.models import DashboardCompanyExpense, DashboardWarehouseExpense
 from apps.orders.models import Order, OrderStatus
-from apps.wallet.models import MasterExpense
+from apps.wallet.models import MasterExpense, WithdrawRequest
 
 
 WEEKDAY_UZ = {
@@ -256,3 +256,133 @@ def get_income_expense(year):
             for month in range(1, 13)
         ],
     }
+
+
+# Figma orange gradient used across the finance charts (donut / legend).
+FINANCE_COLORS = ["#FF4E33", "#FF6B4A", "#FF9B45", "#FFC345", "#FFD98A"]
+
+
+def _completed_income(**date_filters) -> Decimal:
+    """Sum of completed order total_amount for the given `updated_at__*` filters."""
+    filters = {f"updated_at__{key}": value for key, value in date_filters.items()}
+    return (
+        Order.objects.filter(status=OrderStatus.COMPLETED, **filters)
+        .aggregate(total=Sum("total_amount"))["total"]
+        or Decimal("0")
+    )
+
+
+def _expense_breakdown(**date_filters) -> dict:
+    """Master + company + warehouse expense totals for the given `date__*` filters."""
+    filters = {f"date__{key}": value for key, value in date_filters.items()}
+    master = MasterExpense.objects.filter(**filters).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    company = DashboardCompanyExpense.objects.filter(**filters).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    warehouse = DashboardWarehouseExpense.objects.filter(**filters).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    return {"master": master, "company": company, "warehouse": warehouse, "total": master + company + warehouse}
+
+
+def _card(current: Decimal, previous: Decimal) -> dict:
+    change_percent, change_direction = percent_change(current, previous)
+    return {
+        "value": money(current),
+        "formatted": format_uzs(current),
+        "change_percent": change_percent,
+        "change_direction": change_direction,
+    }
+
+
+def get_finance_summary(year: int, month: int | None = None) -> dict:
+    """Summary cards for the Moliya page.
+
+    `month` berilsa oylik ko'rsatkichlar + o'tgan oyga nisbatan o'zgarish,
+    aks holda yillik ko'rsatkichlar + o'tgan yilga nisbatan o'zgarish qaytaradi.
+    """
+    if month:
+        prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
+        income = _completed_income(year=year, month=month)
+        prev_income = _completed_income(year=prev_year, month=prev_month)
+        expense = _expense_breakdown(year=year, month=month)
+        prev_expense = _expense_breakdown(year=prev_year, month=prev_month)
+        orders_count = Order.objects.filter(
+            status=OrderStatus.COMPLETED, updated_at__year=year, updated_at__month=month
+        ).count()
+        period, label = "month", f"{MONTH_UZ[month]} {year}"
+    else:
+        income = _completed_income(year=year)
+        prev_income = _completed_income(year=year - 1)
+        expense = _expense_breakdown(year=year)
+        prev_expense = _expense_breakdown(year=year - 1)
+        orders_count = Order.objects.filter(status=OrderStatus.COMPLETED, updated_at__year=year).count()
+        period, label = "year", str(year)
+
+    profit = income - expense["total"]
+    prev_profit = prev_income - prev_expense["total"]
+    return {
+        "period": period,
+        "year": year,
+        "month": month,
+        "label": label,
+        "income": _card(income, prev_income),
+        "expense": _card(expense["total"], prev_expense["total"]),
+        "profit": _card(profit, prev_profit),
+        "expense_breakdown": {
+            "master": money(expense["master"]),
+            "company": money(expense["company"]),
+            "warehouse": money(expense["warehouse"]),
+        },
+        "orders_count": orders_count,
+        "withdraw_pending_count": WithdrawRequest.objects.filter(status=WithdrawRequest.PENDING).count(),
+    }
+
+
+def get_income_by_service(date_from, date_to, limit=10) -> dict:
+    """Donut: completed order daromadi (Sum total_amount) xizmatlar kesimida."""
+    rows = (
+        Order.objects.filter(
+            status=OrderStatus.COMPLETED,
+            updated_at__date__gte=date_from,
+            updated_at__date__lte=date_to,
+        )
+        .values("service_id", "service__name")
+        .annotate(income=Sum("total_amount"))
+        .order_by("-income")[:limit]
+    )
+    items = [row for row in rows if row["income"]]
+    total = sum((item["income"] for item in items), Decimal("0"))
+    return {
+        "from": date_from.isoformat(),
+        "to": date_to.isoformat(),
+        "total": money(total),
+        "total_formatted": format_uzs(total),
+        "total_mln": round(float(total) / 1_000_000, 1),
+        "items": [
+            {
+                "service_id": str(item["service_id"]),
+                "service_name": item["service__name"],
+                "income": money(item["income"]),
+                "income_mln": round(float(item["income"]) / 1_000_000, 1),
+                "percent": round(float(item["income"]) / float(total) * 100) if total else 0,
+                "color": FINANCE_COLORS[index % len(FINANCE_COLORS)],
+            }
+            for index, item in enumerate(items)
+        ],
+    }
+
+
+def get_top_clients(date_from=None, date_to=None, limit=8):
+    """Eng faol mijozlar: yakunlangan buyurtmalar soni va sarflagan summasi bo'yicha top."""
+    order_filter = Q(orders__status=OrderStatus.COMPLETED)
+    if date_from is not None:
+        order_filter &= Q(orders__updated_at__date__gte=date_from)
+    if date_to is not None:
+        order_filter &= Q(orders__updated_at__date__lte=date_to)
+    # `total_spent`/`total_orders` are real (denormalised, all-time) Client fields, so the
+    # period-scoped aggregates use distinct annotation names to avoid a clash.
+    return (
+        Client.objects.annotate(
+            completed_count=Count("orders", filter=order_filter, distinct=True),
+            completed_spent=Sum("orders__total_amount", filter=order_filter),
+        )
+        .filter(completed_count__gt=0)
+        .order_by("-completed_spent", "-completed_count")[:limit]
+    )
