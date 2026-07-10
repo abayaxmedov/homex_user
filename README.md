@@ -28,6 +28,9 @@ By default, settings fall back to SQLite when `DATABASE_URL` is not configured.
 cp .env.prod.example .env
 # .env ichida DJANGO_SECRET_KEY, POSTGRES_PASSWORD, DJANGO_ALLOWED_HOSTS,
 # CORS_ALLOWED_ORIGINS va CSRF_TRUSTED_ORIGINS qiymatlarini real domenlarga moslang.
+# OTP SMS uchun (SMS_PROVIDER=eskiz): SMS_EMAIL, SMS_PASSWORD ni real Eskiz creds bilan,
+# SMS_FROM ni Eskiz tasdiqlagan sender nickname bilan to'ldiring (bo'sh bo'lsa app boot
+# bo'lmaydi — integrations.E001). SMS kerak bo'lmasa SMS_PROVIDER=stub qoldiring.
 docker compose up -d --build
 docker compose ps
 ```

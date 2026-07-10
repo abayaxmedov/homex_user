@@ -4,6 +4,7 @@ from rest_framework import generics, permissions
 
 from apps.accounts.models import Client, FCMDevice, Master
 from apps.accounts.permissions import IsClient, IsMaster
+from apps.accounts.throttles import OTPBurstThrottle, OTPDailyThrottle
 from apps.accounts.serializers import (
     ClientRegisterSerializer,
     ClientSerializer,
@@ -206,6 +207,9 @@ class MasterLanguageView(generics.GenericAPIView):
 class SendOTPView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
+    # Per-IP rate limit: this endpoint sends real, billed SMS to unauthenticated
+    # callers, so cap it beyond the per-phone cooldown to prevent SMS-pumping.
+    throttle_classes = [OTPBurstThrottle, OTPDailyThrottle]
     serializer_class = SendOTPSerializer
 
     def post(self, request):
