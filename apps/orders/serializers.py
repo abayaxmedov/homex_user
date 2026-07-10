@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import F
 from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -368,13 +369,19 @@ class OrderCompleteSerializer(serializers.Serializer):
         order.save()
         wallet, _ = MasterWallet.objects.get_or_create(master=order.master)
         if order.payment_type == PaymentType.ONLINE:
-            wallet.balance_online += order.total_amount
             payment_method = WalletTransaction.ONLINE
+            MasterWallet.objects.filter(pk=wallet.pk).update(
+                balance_online=F("balance_online") + order.total_amount,
+                total_earned=F("total_earned") + order.total_amount,
+                updated_at=timezone.now(),
+            )
         else:
-            wallet.balance_cash += order.total_amount
             payment_method = WalletTransaction.CASH
-        wallet.total_earned += order.total_amount
-        wallet.save()
+            MasterWallet.objects.filter(pk=wallet.pk).update(
+                balance_cash=F("balance_cash") + order.total_amount,
+                total_earned=F("total_earned") + order.total_amount,
+                updated_at=timezone.now(),
+            )
         WalletTransaction.objects.create(
             master=order.master,
             transaction_type=WalletTransaction.IN,

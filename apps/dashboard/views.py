@@ -1,9 +1,11 @@
 import io
 from datetime import date, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import Count, DecimalField, F, Max, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -43,6 +45,8 @@ from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, W
 from apps.wallet.services import accept_cash_handover, reject_cash_handover
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
 from .serializers import (
+    DashboardCashHandoverActionSerializer,
+    DashboardCashHandoverEnvelopeSerializer,
     DashboardCashHandoverSerializer,
     DashboardCompanyExpenseSerializer,
     DashboardClientMiniSerializer,
@@ -645,28 +649,107 @@ class DashboardCashHandoverListAPIView(DashboardPermissionMixin, EnvelopeMixin, 
 @extend_schema(
     tags=[DASHBOARD_FINANCE_TAG],
     summary="Naqd pulni qabul qilish (tasdiqlash)",
-    description="Admin ustadan naqd pulni qabul qiladi: master naqd balansidan summa yechiladi va tranzaksiya yoziladi.",
+    description=(
+        "Admin ustadan naqd pulni qabul qiladi: master naqd balansidan summa yechiladi, OUT tranzaksiya "
+        "yoziladi va so'rov `approved` holatiga o'tadi. So'rov `pending` bo'lmasa balans o'zgarmaydi "
+        "(idempotent), javobda so'rovning joriy holati qaytadi."
+    ),
+    request=DashboardCashHandoverActionSerializer,
+    responses={200: DashboardCashHandoverEnvelopeSerializer},
+    examples=[
+        OpenApiExample("So'rov (izoh bilan)", value={"note": "Naqd to'liq qabul qilindi"}, request_only=True),
+        OpenApiExample("So'rov (izohsiz)", value={}, request_only=True),
+        OpenApiExample(
+            "Javob",
+            value={
+                "success": True,
+                "message": "OK",
+                "data": {
+                    "id": "8f1d3c2a-1b2c-4d5e-8a9b-0c1d2e3f4a5b",
+                    "master": "3a2b1c0d-9e8f-7a6b-5c4d-3e2f1a0b9c8d",
+                    "master_detail": {
+                        "id": "3a2b1c0d-9e8f-7a6b-5c4d-3e2f1a0b9c8d",
+                        "full_name": "Jasur Karimov",
+                        "phone": "+998901234567",
+                        "avatar": None,
+                        "rating": "5.00",
+                        "is_online": True,
+                        "is_available": True,
+                    },
+                    "amount": "488000.00",
+                    "status": "approved",
+                    "status_label": "Approved",
+                    "admin_note": "Naqd to'liq qabul qilindi",
+                    "created_at": "2026-04-23T12:33:00Z",
+                    "updated_at": "2026-04-23T12:40:00Z",
+                },
+            },
+            response_only=True,
+            status_codes=["200"],
+        ),
+    ],
 )
 class DashboardCashHandoverAcceptAPIView(DashboardPermissionMixin, generics.GenericAPIView):
-    serializer_class = EmptySerializer
+    serializer_class = DashboardCashHandoverActionSerializer
 
     def post(self, request, pk):
         handover = get_object_or_404(WithdrawRequest, pk=pk)
-        accept_cash_handover(handover, note=request.data.get("note", ""))
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        accept_cash_handover(handover, note=serializer.validated_data.get("note", ""))
+        handover.refresh_from_db()
         return success_response(DashboardCashHandoverSerializer(handover, context={"request": request}).data)
 
 
 @extend_schema(
     tags=[DASHBOARD_FINANCE_TAG],
     summary="Naqd pul so'rovini rad etish",
-    description="Admin naqd topshirish so'rovini rad etadi (balans o'zgarmaydi).",
+    description=(
+        "Admin naqd topshirish so'rovini rad etadi: balans o'zgarmaydi, so'rov `rejected` holatiga o'tadi. "
+        "So'rov `pending` bo'lmasa holat o'zgarmaydi (idempotent)."
+    ),
+    request=DashboardCashHandoverActionSerializer,
+    responses={200: DashboardCashHandoverEnvelopeSerializer},
+    examples=[
+        OpenApiExample("So'rov", value={"note": "Hujjat yetarli emas"}, request_only=True),
+        OpenApiExample(
+            "Javob",
+            value={
+                "success": True,
+                "message": "OK",
+                "data": {
+                    "id": "8f1d3c2a-1b2c-4d5e-8a9b-0c1d2e3f4a5b",
+                    "master": "3a2b1c0d-9e8f-7a6b-5c4d-3e2f1a0b9c8d",
+                    "master_detail": {
+                        "id": "3a2b1c0d-9e8f-7a6b-5c4d-3e2f1a0b9c8d",
+                        "full_name": "Jasur Karimov",
+                        "phone": "+998901234567",
+                        "avatar": None,
+                        "rating": "5.00",
+                        "is_online": True,
+                        "is_available": True,
+                    },
+                    "amount": "488000.00",
+                    "status": "rejected",
+                    "status_label": "Rejected",
+                    "admin_note": "Hujjat yetarli emas",
+                    "created_at": "2026-04-23T12:33:00Z",
+                    "updated_at": "2026-04-23T12:40:00Z",
+                },
+            },
+            response_only=True,
+        ),
+    ],
 )
 class DashboardCashHandoverRejectAPIView(DashboardPermissionMixin, generics.GenericAPIView):
-    serializer_class = EmptySerializer
+    serializer_class = DashboardCashHandoverActionSerializer
 
     def post(self, request, pk):
         handover = get_object_or_404(WithdrawRequest, pk=pk)
-        reject_cash_handover(handover, note=request.data.get("note", ""))
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reject_cash_handover(handover, note=serializer.validated_data.get("note", ""))
+        handover.refresh_from_db()
         return success_response(DashboardCashHandoverSerializer(handover, context={"request": request}).data)
 
 
@@ -1807,6 +1890,19 @@ class DashboardWithdrawRequestListCreateAPIView(DashboardPermissionMixin, Envelo
             queryset = queryset.filter(master_id=master)
         return queryset.order_by("-created_at")
 
+    @transaction.atomic
+    def perform_create(self, serializer):
+        master = serializer.validated_data["master"]
+        amount = serializer.validated_data["amount"]
+        wallet, _ = MasterWallet.objects.select_for_update().get_or_create(master=master)
+        pending_withdraw = WithdrawRequest.objects.filter(
+            master=master,
+            status=WithdrawRequest.PENDING,
+        ).aggregate(amount=Sum("amount"))["amount"] or Decimal("0.00")
+        if wallet.balance_cash - pending_withdraw < amount:
+            raise ValidationError({"amount": "Naqd balans yetarli emas"})
+        serializer.save()
+
 
 @extend_schema(
     tags=[DASHBOARD_FINANCE_TAG],
@@ -1829,8 +1925,10 @@ class DashboardWithdrawRequestDetailAPIView(DashboardPermissionMixin, EnvelopeMi
         # (re-PATCHing an already-approved request won't debit twice).
         if instance.status == WithdrawRequest.PENDING and new_status == WithdrawRequest.APPROVED:
             accept_cash_handover(instance, note=note)
+            serializer.instance.refresh_from_db()
         elif instance.status == WithdrawRequest.PENDING and new_status == WithdrawRequest.REJECTED:
             reject_cash_handover(instance, note=note)
+            serializer.instance.refresh_from_db()
         else:
             serializer.save()
 

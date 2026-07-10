@@ -1,4 +1,7 @@
 from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
+from rest_framework import serializers
 
 from apps.wallet.models import MasterWallet, WalletTransaction, WithdrawRequest
 
@@ -7,17 +10,24 @@ from apps.wallet.models import MasterWallet, WalletTransaction, WithdrawRequest
 def accept_cash_handover(handover, note=""):
     """Admin accepts the cash a master handed over.
 
-    Reduces the master's cash balance by the requested amount (floored at 0),
+    Reduces the master's cash balance by the requested amount,
     records an outgoing cash transaction and marks the request approved. Returns
     ``True`` if anything changed (i.e. the request was still pending).
     """
+    handover = WithdrawRequest.objects.select_for_update().select_related("master").get(pk=handover.pk)
     if handover.status != WithdrawRequest.PENDING:
         return False
-    wallet, _ = MasterWallet.objects.get_or_create(master=handover.master)
     amount = handover.amount
-    wallet.balance_cash = max(wallet.balance_cash - amount, 0)
-    wallet.total_withdrawn = wallet.total_withdrawn + amount
-    wallet.save(update_fields=["balance_cash", "total_withdrawn", "updated_at"])
+    if amount <= 0:
+        raise serializers.ValidationError("Pul yechish summasi musbat bo'lishi kerak")
+    wallet, _ = MasterWallet.objects.select_for_update().get_or_create(master=handover.master)
+    if wallet.balance_cash < amount:
+        raise serializers.ValidationError("Naqd balans yetarli emas")
+    MasterWallet.objects.filter(pk=wallet.pk).update(
+        balance_cash=F("balance_cash") - amount,
+        total_withdrawn=F("total_withdrawn") + amount,
+        updated_at=timezone.now(),
+    )
     WalletTransaction.objects.create(
         master=handover.master,
         transaction_type=WalletTransaction.OUT,
@@ -31,8 +41,10 @@ def accept_cash_handover(handover, note=""):
     return True
 
 
+@transaction.atomic
 def reject_cash_handover(handover, note=""):
     """Admin declines a pending cash handover (no balance change)."""
+    handover = WithdrawRequest.objects.select_for_update().get(pk=handover.pk)
     if handover.status != WithdrawRequest.PENDING:
         return False
     handover.status = WithdrawRequest.REJECTED

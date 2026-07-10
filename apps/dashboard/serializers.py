@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
@@ -10,7 +11,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
-from apps.accounts.models import Client, Master
+from apps.accounts.models import Client, Master, MasterApprovalStatus
 from apps.dashboard.models import (
     DashboardBackup,
     DashboardCompanyExpense,
@@ -335,6 +336,36 @@ class DashboardCashHandoverSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class DashboardCashHandoverActionSerializer(serializers.Serializer):
+    """Request body: naqd topshirishni qabul qilish / rad etish uchun ixtiyoriy admin izohi."""
+
+    note = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        help_text=(
+            "Admin izohi (ixtiyoriy). Bo'sh qoldirilsa default yoziladi: qabul qilishda "
+            "'Naqd qabul qilindi', rad etishda 'Rad etildi'."
+        ),
+    )
+
+
+class DashboardCashHandoverEnvelopeSerializer(serializers.Serializer):
+    """`{success, message, data}` javob konverti; `data` — yangilangan naqd topshirish obyekti.
+
+    Faqat OpenAPI hujjati uchun: `data` maydonini `@extend_schema_field` orqali
+    :class:`DashboardCashHandoverSerializer` sifatida turlaydi.
+    """
+
+    success = serializers.BooleanField(default=True)
+    message = serializers.CharField(default="OK")
+    data = serializers.SerializerMethodField()
+
+    @extend_schema_field(DashboardCashHandoverSerializer)
+    def get_data(self, obj):
+        return DashboardCashHandoverSerializer(obj, context=self.context).data
+
+
 class DashboardMasterBlockSerializer(serializers.Serializer):
     """Block or unblock a master (optionally with a reason)."""
 
@@ -383,6 +414,14 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     status = serializers.SerializerMethodField(help_text="Dashboard status: active, busy, inactive, blocked.")
     status_label = serializers.SerializerMethodField()
+    approval_status_label = serializers.CharField(source="get_approval_status_display", read_only=True)
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        style={"input_type": "password"},
+        help_text="Admin usta uchun parol o'rnatadi (tasdiqlashda). Faqat yozish uchun.",
+    )
     orders_count = serializers.SerializerMethodField()
     completed_orders_count = serializers.SerializerMethodField()
     total_income = serializers.SerializerMethodField()
@@ -400,6 +439,11 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
             "rating",
             "status",
             "status_label",
+            "approval_status",
+            "approval_status_label",
+            "approved_at",
+            "rejected_reason",
+            "password",
             "is_online",
             "is_available",
             "is_blocked",
@@ -424,6 +468,8 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
             "rating",
             "status",
             "status_label",
+            "approval_status_label",
+            "approved_at",
             "blocked_at",
             "last_location_at",
             "orders_count",
@@ -432,7 +478,21 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        extra_kwargs = {"password": {"write_only": True}}
+
+    def update(self, instance, validated_data):
+        # Admin tasdiqlash oqimi: parol o'rnatish + approval_status boshqaruvi.
+        password = validated_data.pop("password", None)
+        approval_status = validated_data.get("approval_status")
+        if approval_status == MasterApprovalStatus.APPROVED:
+            instance.is_active = True
+            instance.approved_at = timezone.now()
+            instance.rejected_reason = ""
+        elif approval_status == MasterApprovalStatus.REJECTED:
+            instance.is_active = False
+            instance.approved_at = None
+        if password:
+            instance.set_password(password)  # pbkdf2 hash — save() qayta hash qilmaydi
+        return super().update(instance, validated_data)
 
     @extend_schema_field(serializers.CharField)
     def get_status(self, obj):
@@ -1371,6 +1431,7 @@ class DashboardWalletTransactionSerializer(serializers.ModelSerializer):
 
 
 class DashboardWithdrawRequestSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
     master_detail = DashboardMasterMiniSerializer(source="master", read_only=True)
 
     class Meta:
