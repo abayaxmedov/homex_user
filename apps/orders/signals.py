@@ -1,6 +1,7 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from apps.dashboard.realtime import broadcast_dashboard_order
 from apps.notifications.services import create_notification
 from apps.orders.models import STATUS_TAB, Order, OrderStatus
 from apps.orders.tracking import ensure_tracking
@@ -42,17 +43,25 @@ def sync_order_status(sender, instance, created, **kwargs):
     """
     if created:
         ensure_tracking(instance)
+        broadcast_dashboard_order(instance, "order.created")
         instance._loaded_status = instance.status
+        instance._loaded_master_id = instance.master_id
         return
 
     previous_status = getattr(instance, "_loaded_status", None)
+    previous_master_id = getattr(instance, "_loaded_master_id", None)
     if previous_status is not None and previous_status != instance.status:
         ensure_tracking(instance)
+        broadcast_dashboard_order(instance, "order.status_changed", old_status=previous_status)
         _notify_status_change(instance)
+
+    if previous_master_id is not None and previous_master_id != instance.master_id:
+        broadcast_dashboard_order(instance, "order.master_changed", old_master_id=previous_master_id)
 
     # Refresh the marker so a later save on the same instance compares against
     # the up-to-date status instead of re-broadcasting the same transition.
     instance._loaded_status = instance.status
+    instance._loaded_master_id = instance.master_id
 
 
 def _notify_status_change(order):

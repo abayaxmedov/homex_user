@@ -21,6 +21,7 @@ from apps.dashboard.models import (
     DashboardStaffProfile,
     DashboardWarehouseExpense,
 )
+from apps.dashboard.realtime import broadcast_dashboard_order
 from apps.market.models import MarketCategory, MarketOrder, MarketProduct, MarketProductImage
 from apps.notifications.models import Notification
 from apps.orders.models import STATUS_TAB, Order, OrderMaster, OrderStatus, OrderTracking
@@ -911,6 +912,12 @@ class DashboardOrderAssignSerializer(serializers.Serializer):
         if masters is None and self.validated_data.get("master") is not None:
             masters = [self.validated_data["master"]]
 
+        previous_master_ids = None
+        if masters is not None:
+            previous_master_ids = set(
+                order.assigned_masters.filter(is_active=True).values_list("master_id", flat=True)
+            )
+
         newly_assigned = []
         if masters is not None:
             newly_assigned += self._sync_set(order, "assigned_masters", "master", masters, admin)
@@ -927,6 +934,12 @@ class DashboardOrderAssignSerializer(serializers.Serializer):
                 data={"order_id": str(order.id), "status": order.status},
             )
         order.refresh_from_db()
+        if previous_master_ids is not None:
+            current_master_ids = set(
+                order.assigned_masters.filter(is_active=True).values_list("master_id", flat=True)
+            )
+            if previous_master_ids != current_master_ids:
+                broadcast_dashboard_order(order, "order.master_changed")
         return order
 
 

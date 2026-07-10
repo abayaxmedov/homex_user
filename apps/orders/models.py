@@ -111,8 +111,9 @@ class Order(TimeStampedUUIDModel):
     def from_db(cls, db, field_names, values):
         instance = super().from_db(db, field_names, values)
         # Remember the status as loaded so post_save can detect transitions
-        # and broadcast them to the client's tracking socket.
+        # and broadcast realtime updates.
         instance._loaded_status = instance.status
+        instance._loaded_master_id = instance.master_id
         return instance
 
     def recalculate_total(self):
