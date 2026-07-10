@@ -52,6 +52,9 @@ class WithdrawRequest(TimeStampedUUIDModel):
 
     class Meta:
         ordering = ("-created_at",)
+        constraints = [
+            models.CheckConstraint(check=models.Q(amount__gt=0), name="withdraw_request_amount_positive"),
+        ]
 
 
 class CashHandover(WithdrawRequest):

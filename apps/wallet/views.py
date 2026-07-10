@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from django.db import transaction
 from django.db.models import Sum
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
@@ -40,10 +43,16 @@ class WithdrawRequestCreateView(EnvelopeMixin, generics.CreateAPIView):
     permission_classes = [IsMaster]
     serializer_class = WithdrawRequestSerializer
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        wallet, _ = MasterWallet.objects.get_or_create(master=self.request.user)
         amount = serializer.validated_data["amount"]
-        if wallet.balance_cash < amount:
+        wallet, _ = MasterWallet.objects.select_for_update().get_or_create(master=self.request.user)
+        pending_withdraw = WithdrawRequest.objects.filter(
+            master=self.request.user,
+            status=WithdrawRequest.PENDING,
+        ).aggregate(amount=Sum("amount"))["amount"] or Decimal("0.00")
+        withdrawable = wallet.balance_cash - pending_withdraw
+        if withdrawable < amount:
             raise serializers.ValidationError("Naqd balans yetarli emas")
         serializer.save(master=self.request.user)
 
@@ -61,7 +70,8 @@ class WalletStatsView(generics.GenericAPIView):
         recent = WalletTransaction.objects.filter(master=request.user)[:5]
         pending_withdraw = WithdrawRequest.objects.filter(
             master=request.user, status=WithdrawRequest.PENDING
-        ).aggregate(amount=Sum("amount"))["amount"] or 0
+        ).aggregate(amount=Sum("amount"))["amount"] or Decimal("0.00")
+        withdrawable = max(wallet.balance_cash - pending_withdraw, Decimal("0.00"))
         return success_response(
             {
                 "total_income": total,
@@ -71,7 +81,7 @@ class WalletStatsView(generics.GenericAPIView):
                 "total_earned": wallet.total_earned,
                 "total_withdrawn": wallet.total_withdrawn,
                 "pending_withdraw": pending_withdraw,
-                "withdrawable": wallet.balance_cash,
+                "withdrawable": withdrawable,
                 "recent_transactions": WalletTransactionSerializer(recent, many=True).data,
             }
         )

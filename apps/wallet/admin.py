@@ -1,6 +1,7 @@
 from django.contrib import admin, messages
 from django.shortcuts import redirect
 from django.urls import reverse
+from rest_framework.exceptions import ValidationError
 from unfold.decorators import action
 
 from apps.common.admin_mixins import HomeXModelAdmin
@@ -27,6 +28,14 @@ class CashHandoverActionsMixin:
     actions = ("accept_selected", "reject_selected")
     actions_row = ("accept_row", "reject_row")
 
+    def _validation_message(self, exc):
+        detail = getattr(exc, "detail", exc)
+        if isinstance(detail, list):
+            return " ".join(str(item) for item in detail)
+        if isinstance(detail, dict):
+            return " ".join(f"{key}: {value}" for key, value in detail.items())
+        return str(detail)
+
     def _changelist_url(self):
         meta = self.model._meta
         return reverse(f"admin:{meta.app_label}_{meta.model_name}_changelist")
@@ -34,10 +43,13 @@ class CashHandoverActionsMixin:
     @action(description="Tasdiqlash", url_path="accept-cash")
     def accept_row(self, request, object_id):
         handover = WithdrawRequest.objects.filter(pk=object_id).first()
-        if handover and accept_cash_handover(handover):
-            self.message_user(request, "Naqd pul qabul qilindi, master balansidan yechildi.", messages.SUCCESS)
-        else:
-            self.message_user(request, "So'rov topilmadi yoki allaqachon yopilgan.", messages.WARNING)
+        try:
+            if handover and accept_cash_handover(handover):
+                self.message_user(request, "Naqd pul qabul qilindi, master balansidan yechildi.", messages.SUCCESS)
+            else:
+                self.message_user(request, "So'rov topilmadi yoki allaqachon yopilgan.", messages.WARNING)
+        except ValidationError as exc:
+            self.message_user(request, self._validation_message(exc), messages.ERROR)
         return redirect(self._changelist_url())
 
     @action(description="Rad etish", url_path="reject-cash")
@@ -51,7 +63,15 @@ class CashHandoverActionsMixin:
 
     @admin.action(description="Naqd pulni qabul qilish (balansdan yechiladi)")
     def accept_selected(self, request, queryset):
-        done = sum(1 for handover in queryset if accept_cash_handover(handover))
+        done = 0
+        errors = 0
+        for handover in queryset:
+            try:
+                done += 1 if accept_cash_handover(handover) else 0
+            except ValidationError:
+                errors += 1
+        if errors:
+            self.message_user(request, f"{errors} ta so'rov balans yetarli bo'lmagani uchun tasdiqlanmadi.", messages.ERROR)
         self.message_user(request, f"{done} ta so'rov tasdiqlandi.", messages.SUCCESS)
 
     @admin.action(description="So'rovlarni rad etish")

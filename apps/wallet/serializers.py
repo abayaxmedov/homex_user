@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
@@ -18,6 +20,8 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
 
 
 class WithdrawRequestSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
+
     class Meta:
         model = WithdrawRequest
         fields = ("id", "amount", "status", "admin_note", "created_at")

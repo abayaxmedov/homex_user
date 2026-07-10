@@ -14,6 +14,28 @@ def test_master_cash_handover_validates_balance(master_api, master):
     assert WithdrawRequest.objects.filter(master=master).count() == 1
 
 
+def test_master_cash_handover_rejects_non_positive_amount(master_api, master):
+    MasterWallet.objects.create(master=master, balance_cash=100000)
+
+    negative = master_api.post(reverse("master-wallet-withdraw"), {"amount": "-100000"}, format="json")
+    zero = master_api.post(reverse("master-wallet-withdraw"), {"amount": "0"}, format="json")
+
+    assert negative.status_code == 400
+    assert zero.status_code == 400
+    assert not WithdrawRequest.objects.filter(master=master).exists()
+
+
+def test_master_cash_handover_reserves_pending_amount(master_api, master):
+    MasterWallet.objects.create(master=master, balance_cash=100000)
+
+    first = master_api.post(reverse("master-wallet-withdraw"), {"amount": "60000"}, format="json")
+    second = master_api.post(reverse("master-wallet-withdraw"), {"amount": "50000"}, format="json")
+
+    assert first.status_code == 201
+    assert second.status_code == 400
+    assert WithdrawRequest.objects.filter(master=master, status=WithdrawRequest.PENDING).count() == 1
+
+
 def test_cash_handover_accept_zeroes_cash(master_api, master, admin_api):
     wallet = MasterWallet.objects.create(master=master, balance_cash=324000)
     master_api.post(reverse("master-wallet-withdraw"), {"amount": "324000"}, format="json")
@@ -37,6 +59,21 @@ def test_cash_handover_accept_zeroes_cash(master_api, master, admin_api):
     assert wallet.total_withdrawn == 324000
 
 
+def test_cash_handover_accept_requires_current_cash_balance(master, admin_api):
+    wallet = MasterWallet.objects.create(master=master, balance_cash=100000)
+    handover = WithdrawRequest.objects.create(master=master, amount=150000, status=WithdrawRequest.PENDING)
+
+    response = admin_api.post(reverse("dashboard-cash-handover-accept", args=[handover.id]))
+
+    wallet.refresh_from_db()
+    handover.refresh_from_db()
+    assert response.status_code == 400
+    assert wallet.balance_cash == 100000
+    assert wallet.total_withdrawn == 0
+    assert handover.status == WithdrawRequest.PENDING
+    assert not WalletTransaction.objects.filter(master=master).exists()
+
+
 def test_cash_handover_reject_keeps_cash(master_api, master, admin_api):
     wallet = MasterWallet.objects.create(master=master, balance_cash=324000)
     master_api.post(reverse("master-wallet-withdraw"), {"amount": "324000"}, format="json")
@@ -50,6 +87,55 @@ def test_cash_handover_reject_keeps_cash(master_api, master, admin_api):
     assert wallet.balance_cash == 324000  # unchanged
     assert handover.status == WithdrawRequest.REJECTED
     assert not WalletTransaction.objects.filter(master=master).exists()
+
+
+def test_cash_handover_accept_returns_enveloped_body_with_note(master_api, master, admin_api):
+    MasterWallet.objects.create(master=master, balance_cash=488000)
+    master_api.post(reverse("master-wallet-withdraw"), {"amount": "488000"}, format="json")
+    handover = WithdrawRequest.objects.get(master=master)
+
+    accept = admin_api.post(
+        reverse("dashboard-cash-handover-accept", args=[handover.id]),
+        {"note": "Naqd to'liq qabul qilindi"},
+        format="json",
+    )
+
+    assert accept.status_code == 200
+    # Enveloped response body: {success, message, data: {...cash handover...}}.
+    assert accept.data["success"] is True
+    data = accept.data["data"]
+    assert data["id"] == str(handover.id)
+    assert data["status"] == "approved"
+    assert data["status_label"] == "Approved"
+    assert data["admin_note"] == "Naqd to'liq qabul qilindi"  # request note persisted
+    assert data["master_detail"]["id"] == str(master.id)
+
+
+def test_cash_handover_accept_without_note_uses_default(master_api, master, admin_api):
+    MasterWallet.objects.create(master=master, balance_cash=100000)
+    master_api.post(reverse("master-wallet-withdraw"), {"amount": "100000"}, format="json")
+    handover = WithdrawRequest.objects.get(master=master)
+
+    accept = admin_api.post(reverse("dashboard-cash-handover-accept", args=[handover.id]))
+
+    assert accept.status_code == 200
+    assert accept.data["data"]["admin_note"] == "Naqd qabul qilindi"  # default note
+
+
+def test_cash_handover_accept_rejects_too_long_note(master_api, master, admin_api):
+    MasterWallet.objects.create(master=master, balance_cash=100000)
+    master_api.post(reverse("master-wallet-withdraw"), {"amount": "100000"}, format="json")
+    handover = WithdrawRequest.objects.get(master=master)
+
+    response = admin_api.post(
+        reverse("dashboard-cash-handover-accept", args=[handover.id]),
+        {"note": "x" * 256},  # max_length=255
+        format="json",
+    )
+
+    assert response.status_code == 400
+    handover.refresh_from_db()
+    assert handover.status == WithdrawRequest.PENDING  # invalid request -> no state change
 
 
 def test_dashboard_cash_handover_list_defaults_to_pending(master, admin_api):
