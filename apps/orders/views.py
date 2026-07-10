@@ -490,10 +490,20 @@ class MasterLocationUpdateView(generics.GenericAPIView):
 
 @extend_schema(tags=["Client Home"])
 class ClientHomeView(generics.GenericAPIView):
-    permission_classes = [IsClient]
+    permission_classes = [AllowAny]
     serializer_class = OrderSerializer
 
+    def get_public_payload(self, request):
+        categories = ServiceCategory.objects.filter(is_active=True).prefetch_related("services")
+        return {
+            "services": ServiceCategorySerializer(categories, many=True).data,
+            "banners": get_home_banners(request),
+        }
+
     def get(self, request):
+        if not (request.user and getattr(request.user, "role", None) == "client"):
+            return success_response(self.get_public_payload(request))
+
         categories = ServiceCategory.objects.filter(is_active=True).prefetch_related("services")
         active_orders = Order.objects.filter(client=request.user).exclude(
             status__in=[OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REJECTED]
@@ -641,7 +651,7 @@ class NearbyMasterListView(EnvelopeMixin, generics.ListAPIView):
     ),
 )
 class ClientOrderListCreateView(EnvelopeMixin, generics.ListCreateAPIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsClient]
     serializer_class = OrderSerializer
 
     def get_queryset(self):

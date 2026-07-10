@@ -518,6 +518,15 @@ def test_client_home_and_map_config_are_frontend_ready(client_api):
     assert map_response.data["data"]["auth_header"] == "Authorization: Bearer {access_token}"
 
 
+def test_client_home_anonymous_user_only_gets_public_payload(api_client, service):
+    response = api_client.get(reverse("client-home"))
+
+    assert response.status_code == 200
+    assert set(response.data["data"]) == {"services", "banners"}
+    assert response.data["data"]["services"][0]["name"] == service.category.name
+    assert set(response.data["data"]["banners"][0]) == {"id", "banner_image", "banner_url", "is_active"}
+
+
 def test_client_home_banner_image_is_exposed_in_api(client_api):
     HomeBanner.objects.update(is_active=False)
     HomeBanner.objects.create(banner_image="home/banners/mobile-banner.jpg")
