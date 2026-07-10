@@ -35,6 +35,44 @@ from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCateg
 
 DASHBOARD_ROLE = "admin"
 
+DASHBOARD_PERMISSION_LABELS = {
+    "dashboard": "Dashboard",
+    "orders": "Buyurtmalar",
+    "clients": "Mijozlar",
+    "marketplace": "Marketplace",
+    "tariffs": "Tariflar",
+    "live": "Jonli kuzatuv",
+    "live_tracking": "Jonli kuzatuv",
+    "messages": "Xabarlar",
+    "support": "Xabarlar",
+    "services": "Xizmat va Narxlar",
+    "masters": "Ustalar",
+    "warehouse": "Ombor",
+    "expenses": "Xarajatlar",
+    "finance": "Moliya va Hisobot",
+    "staff": "Xodimlar",
+}
+
+
+def dashboard_permission_label(permission):
+    return DASHBOARD_PERMISSION_LABELS.get(permission, str(permission).replace("_", " ").title())
+
+
+def dashboard_role_label(role):
+    return dict(DashboardStaffProfile.ROLES).get(role, str(role).replace("_", " ").title())
+
+
+def dashboard_permissions_payload(profile, user=None):
+    permissions = list(getattr(profile, "permissions", []) or [])
+    is_all = bool(getattr(user, "is_superuser", False) or getattr(profile, "role", "") == DashboardStaffProfile.ADMIN)
+    labels = [dashboard_permission_label(permission) for permission in permissions]
+    return {
+        "permissions": permissions,
+        "permissions_count": None if is_all else len(permissions),
+        "permissions_display": "Barcha" if is_all else f"{len(permissions)}-ta bo'lim",
+        "permissions_label": "Barcha" if is_all else ", ".join(labels),
+    }
+
 
 def issue_dashboard_tokens(user):
     access = AccessToken()
@@ -949,13 +987,61 @@ class DashboardExpenseSerializer(serializers.ModelSerializer):
 
 
 class DashboardStaffProfileSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(required=False, max_length=30)
+    role_label = serializers.SerializerMethodField()
+    permissions_count = serializers.SerializerMethodField()
+    permissions_display = serializers.SerializerMethodField()
+    permissions_label = serializers.SerializerMethodField()
+
     class Meta:
         model = DashboardStaffProfile
-        fields = ("role", "phone", "permissions")
+        fields = (
+            "role",
+            "role_label",
+            "phone",
+            "permissions",
+            "permissions_count",
+            "permissions_display",
+            "permissions_label",
+        )
+        read_only_fields = ("role_label", "permissions_count", "permissions_display", "permissions_label")
+
+    def validate_role(self, value):
+        value = str(value).strip()
+        if not value:
+            raise serializers.ValidationError("Rol bo'sh bo'lishi mumkin emas")
+        return value
+
+    @extend_schema_field(serializers.CharField)
+    def get_role_label(self, obj):
+        return dashboard_role_label(obj.role)
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_permissions_count(self, obj):
+        user = getattr(obj, "user", None)
+        return dashboard_permissions_payload(obj, user)["permissions_count"]
+
+    @extend_schema_field(serializers.CharField)
+    def get_permissions_display(self, obj):
+        user = getattr(obj, "user", None)
+        return dashboard_permissions_payload(obj, user)["permissions_display"]
+
+    @extend_schema_field(serializers.CharField)
+    def get_permissions_label(self, obj):
+        user = getattr(obj, "user", None)
+        return dashboard_permissions_payload(obj, user)["permissions_label"]
 
 
 class DashboardStaffSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    avatar = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
+    role_label = serializers.SerializerMethodField()
+    phone = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+    permissions_count = serializers.SerializerMethodField()
+    permissions_display = serializers.SerializerMethodField()
+    permissions_label = serializers.SerializerMethodField()
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
     profile = DashboardStaffProfileSerializer(source="dashboard_profile", required=False)
 
@@ -967,6 +1053,7 @@ class DashboardStaffSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "full_name",
+            "avatar",
             "email",
             "password",
             "is_staff",
@@ -974,6 +1061,13 @@ class DashboardStaffSerializer(serializers.ModelSerializer):
             "is_active",
             "last_login",
             "date_joined",
+            "role",
+            "role_label",
+            "phone",
+            "permissions",
+            "permissions_count",
+            "permissions_display",
+            "permissions_label",
             "profile",
         )
         read_only_fields = ("id", "full_name", "last_login", "date_joined")
@@ -982,10 +1076,65 @@ class DashboardStaffSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         return obj.get_full_name() or obj.get_username()
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_avatar(self, obj):
+        return None
+
+    def get_profile(self, obj):
+        try:
+            return obj.dashboard_profile
+        except DashboardStaffProfile.DoesNotExist:
+            return None
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_role(self, obj):
+        profile = self.get_profile(obj)
+        return profile.role if profile else None
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_role_label(self, obj):
+        profile = self.get_profile(obj)
+        return dashboard_role_label(profile.role) if profile else None
+
+    @extend_schema_field(serializers.CharField)
+    def get_phone(self, obj):
+        profile = self.get_profile(obj)
+        return profile.phone if profile else ""
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_permissions(self, obj):
+        profile = self.get_profile(obj)
+        return dashboard_permissions_payload(profile, obj)["permissions"] if profile else []
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_permissions_count(self, obj):
+        profile = self.get_profile(obj)
+        return dashboard_permissions_payload(profile, obj)["permissions_count"] if profile else 0
+
+    @extend_schema_field(serializers.CharField)
+    def get_permissions_display(self, obj):
+        profile = self.get_profile(obj)
+        return dashboard_permissions_payload(profile, obj)["permissions_display"] if profile else "0-ta bo'lim"
+
+    @extend_schema_field(serializers.CharField)
+    def get_permissions_label(self, obj):
+        profile = self.get_profile(obj)
+        return dashboard_permissions_payload(profile, obj)["permissions_label"] if profile else ""
+
+    def to_internal_value(self, data):
+        data = data.copy()
+        full_name = str(data.get("full_name") or "").strip()
+        if full_name and not data.get("first_name"):
+            first_name, _, last_name = full_name.partition(" ")
+            data["first_name"] = first_name
+            if last_name and not data.get("last_name"):
+                data["last_name"] = last_name
+        return super().to_internal_value(data)
+
     def create(self, validated_data):
         profile_data = validated_data.pop("dashboard_profile", {})
         password = validated_data.pop("password", None)
-        validated_data.setdefault("is_staff", True)
+        validated_data["is_staff"] = True
         user = get_user_model().objects.create_user(password=password or None, **validated_data)
         DashboardStaffProfile.objects.create(user=user, **profile_data)
         return user
