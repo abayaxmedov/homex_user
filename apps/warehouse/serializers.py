@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
@@ -44,6 +46,12 @@ class WarehouseProductSerializer(serializers.ModelSerializer):
 
 class MasterInventorySerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="warehouse_product.name", read_only=True)
+    sale_price = serializers.DecimalField(
+        source="warehouse_product.sale_price",
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
     is_low_stock = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -53,6 +61,7 @@ class MasterInventorySerializer(serializers.ModelSerializer):
             "master",
             "warehouse_product",
             "product_name",
+            "sale_price",
             "quantity",
             "unit",
             "low_threshold",
@@ -130,7 +139,7 @@ class AdminUpdateInventorySerializer(serializers.Serializer):
 
 
 class UseInventorySerializer(serializers.Serializer):
-    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
     order_id = serializers.UUIDField()
 
     @transaction.atomic

@@ -1,5 +1,8 @@
+import json
+from decimal import Decimal
+
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Sum
 from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -331,10 +334,40 @@ class OrderStartSerializer(serializers.Serializer):
         return order
 
 
+class JSONListField(serializers.ListField):
+    default_error_messages = {
+        "invalid_json": "Expected a JSON array string for multipart form data.",
+    }
+
+    def to_internal_value(self, data):
+        if data in ("", None):
+            return []
+        if isinstance(data, str):
+            data = self._parse_json(data)
+        elif isinstance(data, (list, tuple)) and len(data) == 1 and isinstance(data[0], str):
+            data = self._parse_json(data[0])
+        return super().to_internal_value(data)
+
+    def _parse_json(self, value):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            self.fail("invalid_json")
+        if isinstance(parsed, dict):
+            return [parsed]
+        return parsed
+
+
+class OrderCompleteUsedItemSerializer(serializers.Serializer):
+    inventory_id = serializers.UUIDField()
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, required=False, default=0)
+
+
 class OrderCompleteSerializer(serializers.Serializer):
     service_fee = serializers.DecimalField(max_digits=12, decimal_places=2)
     completion_photo = UploadImageField(required=False)
-    used_items = serializers.ListField(child=serializers.DictField(), required=False)
+    used_items = JSONListField(child=OrderCompleteUsedItemSerializer(), required=False)
 
     @transaction.atomic
     def save(self, **kwargs):
@@ -344,9 +377,13 @@ class OrderCompleteSerializer(serializers.Serializer):
             order.completion_photo = self.validated_data["completion_photo"]
         inventory_total = 0
         for item in self.validated_data.get("used_items", []):
-            inventory = MasterInventory.objects.select_for_update().get(id=item["inventory_id"], master=order.master)
+            inventory = (
+                MasterInventory.objects.select_for_update()
+                .select_related("warehouse_product")
+                .get(id=item["inventory_id"], master=order.master)
+            )
             quantity = item["quantity"]
-            unit_price = item.get("unit_price", 0)
+            unit_price = inventory.warehouse_product.sale_price
             if inventory.quantity < quantity:
                 raise serializers.ValidationError("Usta omborida yetarli mahsulot yo'q")
             inventory.quantity -= quantity
@@ -358,7 +395,7 @@ class OrderCompleteSerializer(serializers.Serializer):
                 unit_price=unit_price,
             )
             inventory_total += usage.total_price
-        order.inventory_total = inventory_total
+        order.inventory_total = order.inventory_usages.aggregate(total=Sum("total_price"))["total"] or inventory_total
         order.status = OrderStatus.COMPLETED
         if not order.receipt_approved_at:
             order.receipt_approved_at = timezone.now()

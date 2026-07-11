@@ -348,7 +348,7 @@ class MasterOrderRejectView(generics.GenericAPIView):
             "Complete order multipart fields",
             value={
                 "service_fee": "285000.00",
-                "used_items": [{"inventory_id": "inventory_uuid", "quantity": "1", "unit_price": "50000.00"}],
+                "used_items": [{"inventory_id": "inventory_uuid", "quantity": "1"}],
             },
             request_only=True,
         )

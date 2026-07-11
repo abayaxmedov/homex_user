@@ -1,4 +1,5 @@
 from django.db import models, transaction
+from django.db.models import Sum
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, permissions
@@ -53,14 +54,31 @@ class UseInventoryView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = UseInventorySerializer
 
+    @transaction.atomic
     def post(self, request, pk):
-        item = get_object_or_404(MasterInventory.objects.select_related("warehouse_product"), pk=pk, master=request.user)
+        item = get_object_or_404(
+            MasterInventory.objects.select_for_update().select_related("warehouse_product"),
+            pk=pk,
+            master=request.user,
+        )
         serializer = self.get_serializer(data=request.data, context={"item": item})
         serializer.is_valid(raise_exception=True)
+        order = get_object_or_404(
+            Order.objects.select_for_update(),
+            id=serializer.validated_data["order_id"],
+            master=request.user,
+        )
         item = serializer.save()
-        order = get_object_or_404(Order, id=serializer.validated_data["order_id"], master=request.user)
-        unit_price = getattr(item.warehouse_product, "price", 0) or 0
-        OrderInventoryUsage.objects.create(order=order, inventory=item, quantity=serializer.validated_data["quantity"], unit_price=unit_price)
+        unit_price = item.warehouse_product.sale_price
+        OrderInventoryUsage.objects.create(
+            order=order,
+            inventory=item,
+            quantity=serializer.validated_data["quantity"],
+            unit_price=unit_price,
+        )
+        order.inventory_total = order.inventory_usages.aggregate(total=Sum("total_price"))["total"] or 0
+        order.recalculate_total()
+        order.save(update_fields=["inventory_total", "total_amount", "updated_at"])
         return success_response(MasterInventorySerializer(item).data)
 
 
