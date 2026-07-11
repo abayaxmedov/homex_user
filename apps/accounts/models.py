@@ -78,9 +78,24 @@ class Master(TimeStampedUUIDModel):
     def is_authenticated(self):
         return True
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._loaded_status_fields = instance.status_fields()
+        return instance
+
     @property
     def role(self):
         return "master"
+
+    def status_fields(self):
+        return (
+            self.is_active,
+            self.is_online,
+            self.is_available,
+            self.is_blocked,
+            self.approval_status,
+        )
 
     @property
     def is_approved(self):
