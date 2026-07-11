@@ -95,7 +95,7 @@ class Command(BaseCommand):
         w("     -> status=on_way; notification socketga 'order.status' (on_way). Endi tracking socket lokatsiya oladi.")
         w(f"  4) Yetib keldi (MASTER):    POST /api/v1/master/orders/{order.id}/arrived/  body: {{}}")
         w("     -> status=arrived; notification socketga 'order.status' (arrived).")
-        w(f"  5) Yakunlash (MASTER):      POST /api/v1/master/orders/{order.id}/complete/ body: {{\"service_fee\":\"150000\",\"payment_type\":\"cash\"}}")
+        w(f"  5) Yakunlash (MASTER):      POST /api/v1/master/orders/{order.id}/complete/ body: {{\"service_fee\":\"150000\"}}")
         w("     -> status=completed; notification socketga 'order.status' (completed), to'lov/check bosqichiga o'tiladi.")
         w("  --- Usta yo'lda vaqti lokatsiya (WS): ws://localhost:8000/ws/master/tracking/ + MASTER token")
         w('      Yuboring: {"lat": "41.311081", "lng": "69.240562"}  (order_id shart emas) -> client tracking socketda master.location oladi.')
