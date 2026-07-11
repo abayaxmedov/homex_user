@@ -35,11 +35,11 @@ def test_order_complete_updates_wallet_and_inventory(master, client_user, servic
         scheduled_date=date.today(),
         scheduled_time=time(10, 0),
         status=OrderStatus.ACCEPTED,
+        payment_type=PaymentType.ONLINE,
     )
     serializer = OrderCompleteSerializer(
         data={
             "service_fee": "100000",
-            "payment_type": PaymentType.CASH,
             "used_items": [{"inventory_id": str(item.id), "quantity": 2, "unit_price": 15000}],
         },
         context={"order": order},
@@ -50,5 +50,9 @@ def test_order_complete_updates_wallet_and_inventory(master, client_user, servic
     wallet = MasterWallet.objects.get(master=master)
 
     assert item.quantity == 3
-    assert wallet.balance_cash == 130000
-    assert WalletTransaction.objects.filter(master=master, amount=130000).exists()
+    assert wallet.balance_online == 130000
+    assert WalletTransaction.objects.filter(
+        master=master,
+        amount=130000,
+        payment_method=WalletTransaction.ONLINE,
+    ).exists()

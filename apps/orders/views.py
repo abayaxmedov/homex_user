@@ -338,8 +338,9 @@ class MasterOrderRejectView(generics.GenericAPIView):
     summary="Orderni yakunlash",
     description=(
         "Master bajarilgan orderni yakunlaydi. Multipart request ishlatiladi: `completion_photo` optional. "
-        "`used_items` inventory ishlatilgan bo'lsa JSON string/list sifatida yuboriladi. Yakunlanganda order total, "
-        "wallet transaction va client notification yangilanadi."
+        "`payment_type` client order yaratganda tanlagan qiymatdan olinadi. `used_items` inventory ishlatilgan bo'lsa "
+        "JSON string/list sifatida yuboriladi. Yakunlanganda order total, wallet transaction va client notification "
+        "yangilanadi."
     ),
     request={"multipart/form-data": OrderCompleteSerializer},
     examples=[
@@ -347,7 +348,6 @@ class MasterOrderRejectView(generics.GenericAPIView):
             "Complete order multipart fields",
             value={
                 "service_fee": "285000.00",
-                "payment_type": "cash",
                 "used_items": [{"inventory_id": "inventory_uuid", "quantity": "1", "unit_price": "50000.00"}],
             },
             request_only=True,

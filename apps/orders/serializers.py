@@ -333,7 +333,6 @@ class OrderStartSerializer(serializers.Serializer):
 
 class OrderCompleteSerializer(serializers.Serializer):
     service_fee = serializers.DecimalField(max_digits=12, decimal_places=2)
-    payment_type = serializers.ChoiceField(choices=PaymentType.choices)
     completion_photo = UploadImageField(required=False)
     used_items = serializers.ListField(child=serializers.DictField(), required=False)
 
@@ -341,7 +340,6 @@ class OrderCompleteSerializer(serializers.Serializer):
     def save(self, **kwargs):
         order = self.context["order"]
         order.service_fee = self.validated_data["service_fee"]
-        order.payment_type = self.validated_data["payment_type"]
         if self.validated_data.get("completion_photo"):
             order.completion_photo = self.validated_data["completion_photo"]
         inventory_total = 0

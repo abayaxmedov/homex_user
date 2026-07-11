@@ -126,7 +126,7 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
     arrived_track = client_api.get(reverse("client-order-track", args=[order.id]))
     complete_response = master_api.post(
         reverse("master-order-complete", args=[order.id]),
-        {"service_fee": "100000.00", "payment_type": "cash"},
+        {"service_fee": "100000.00"},
         format="json",
     )
     completed_track = client_api.get(reverse("client-order-track", args=[order.id]))
@@ -184,7 +184,7 @@ def test_notification_socket_receives_full_status_flow(master_api, master, clien
     arrived = async_to_sync(channel_layer.receive)(channel_name)
     master_api.post(
         reverse("master-order-complete", args=[order.id]),
-        {"service_fee": "100000.00", "payment_type": "cash"},
+        {"service_fee": "100000.00"},
         format="json",
     )
     completed = async_to_sync(channel_layer.receive)(channel_name)
