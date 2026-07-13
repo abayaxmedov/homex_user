@@ -1,4 +1,14 @@
+from django.conf import settings
 from rest_framework.throttling import AnonRateThrottle
+
+from apps.common.phone import normalize_phone
+
+
+def _is_playmarket_test_request(request):
+    configured_phone = normalize_phone(getattr(settings, "PLAYMARKET_TEST_PHONE", ""))
+    configured_otp = getattr(settings, "PLAYMARKET_TEST_OTP", "")
+    request_phone = normalize_phone(getattr(request, "data", {}).get("phone"))
+    return bool(configured_phone and configured_otp) and request_phone == configured_phone
 
 
 class OTPBurstThrottle(AnonRateThrottle):
@@ -13,8 +23,18 @@ class OTPBurstThrottle(AnonRateThrottle):
 
     scope = "otp"
 
+    def allow_request(self, request, view):
+        if _is_playmarket_test_request(request):
+            return True
+        return super().allow_request(request, view)
+
 
 class OTPDailyThrottle(AnonRateThrottle):
     """Per-IP daily ceiling for the OTP-send endpoint (defense in depth)."""
 
     scope = "otp_day"
+
+    def allow_request(self, request, view):
+        if _is_playmarket_test_request(request):
+            return True
+        return super().allow_request(request, view)

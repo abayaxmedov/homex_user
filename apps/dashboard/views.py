@@ -10,7 +10,7 @@ from django.db.models import Count, DecimalField, F, Max, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -1417,6 +1417,18 @@ class DashboardMarketCategoryDetailAPIView(DashboardPermissionMixin, EnvelopeMix
     summary="Marketplace mahsulotlari",
     description="Marketplace mahsulotlari sahifasi uchun product ro'yxatini search/filter bilan qaytaradi yoki dashboarddan yangi product yaratadi.",
 )
+@extend_schema_view(
+    get=extend_schema(tags=[DASHBOARD_MARKET_TAG], summary="Marketplace mahsulotlar ro'yxati"),
+    post=extend_schema(
+        tags=[DASHBOARD_MARKET_TAG],
+        summary="Marketplace mahsulot yaratish (rasm bilan birga)",
+        description=(
+            "Bitta `multipart/form-data` so'rovda mahsulot ma'lumoti VA rasmlar birga yuboriladi. "
+            "`uploaded_images` — bir nechta rasm fayli (bir xil nom bilan takrorlanadi). Alohida rasm API shart emas."
+        ),
+        request={"multipart/form-data": DashboardMarketProductSerializer},
+    ),
+)
 class DashboardMarketProductListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.ListCreateAPIView):
     serializer_class = DashboardMarketProductSerializer
 
@@ -1442,10 +1454,20 @@ class DashboardMarketProductListCreateAPIView(DashboardPermissionMixin, Envelope
         return queryset.order_by("-created_at")
 
 
-@extend_schema(
-    tags=[DASHBOARD_MARKET_TAG],
-    summary="Marketplace mahsulot detail",
-    description="Marketplace mahsulot detail/edit oynasi uchun mahsulotni ko'rish, tahrirlash yoki o'chirish uchun ishlatiladi.",
+@extend_schema_view(
+    get=extend_schema(tags=[DASHBOARD_MARKET_TAG], summary="Marketplace mahsulot detail"),
+    put=extend_schema(
+        tags=[DASHBOARD_MARKET_TAG],
+        summary="Mahsulotni tahrirlash (rasm bilan)",
+        description="`multipart/form-data`: matn maydonlari + `uploaded_images` (yangi rasmlar qo'shiladi).",
+        request={"multipart/form-data": DashboardMarketProductSerializer},
+    ),
+    patch=extend_schema(
+        tags=[DASHBOARD_MARKET_TAG],
+        summary="Mahsulotni qisman tahrirlash (rasm bilan)",
+        request={"multipart/form-data": DashboardMarketProductSerializer},
+    ),
+    delete=extend_schema(tags=[DASHBOARD_MARKET_TAG], summary="Mahsulotni o'chirish yoki arxivlash"),
 )
 class DashboardMarketProductDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardMarketProductSerializer

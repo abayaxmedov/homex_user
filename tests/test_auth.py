@@ -90,6 +90,20 @@ def test_send_otp_endpoint_is_ip_throttled(db):
     assert statuses.count(200) <= 5
 
 
+def test_playmarket_test_otp_bypasses_send_endpoint_throttle(settings, db):
+    settings.PLAYMARKET_TEST_PHONE = "+998900000000"
+    settings.PLAYMARKET_TEST_OTP = "111111"
+    cache.clear()
+    api = APIClient()
+
+    statuses = [
+        api.post(reverse("client-send-otp"), {"phone": "+998900000000"}, format="json").status_code
+        for _ in range(7)
+    ]
+
+    assert statuses == [200] * 7
+
+
 def test_otp_blocks_after_five_wrong_attempts(settings, db):
     phone = "+998900000002"
     OTPRecord.objects.create(phone=phone, code="111111", expires_at=timezone.now() + timezone.timedelta(minutes=2))
@@ -100,6 +114,40 @@ def test_otp_blocks_after_five_wrong_attempts(settings, db):
         assert not serializer.is_valid()
 
     assert cache.get(f"otp:block:{phone}") is True
+
+
+def test_playmarket_test_otp_does_not_expire_or_send_sms(settings, monkeypatch, db):
+    settings.PLAYMARKET_TEST_PHONE = "+998900000000"
+    settings.PLAYMARKET_TEST_OTP = "111111"
+    sent = []
+    monkeypatch.setattr("apps.accounts.serializers.send_otp_async", lambda phone, code: sent.append((phone, code)))
+
+    first = SendOTPSerializer(data={"phone": "998-90-000-00-00"})
+    assert first.is_valid(), first.errors
+    assert first.save() == {"phone": "+998900000000", "expires_in": settings.OTP_TTL_SECONDS}
+
+    second = SendOTPSerializer(data={"phone": "+998900000000"})
+    assert second.is_valid(), second.errors
+    second.save()
+
+    verify = VerifyOTPSerializer(data={"phone": "+998900000000", "otp_code": "111111"})
+    assert verify.is_valid(), verify.errors
+    tokens = verify.save()
+
+    assert sent == []
+    assert OTPRecord.objects.filter(phone="+998900000000").count() == 0
+    assert tokens["access_token"]
+    assert tokens["client"]["phone"] == "+998900000000"
+
+
+def test_playmarket_test_otp_rejects_wrong_code(settings, db):
+    settings.PLAYMARKET_TEST_PHONE = "+998900000000"
+    settings.PLAYMARKET_TEST_OTP = "111111"
+
+    verify = VerifyOTPSerializer(data={"phone": "+998900000000", "otp_code": "000000"})
+
+    assert not verify.is_valid()
+    assert "OTP kodi noto'g'ri" in str(verify.errors)
 
 
 def test_master_register_waits_for_admin_approval(db):

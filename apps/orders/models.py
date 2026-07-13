@@ -91,6 +91,8 @@ class Order(TimeStampedUUIDModel):
     inventory_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     bonus_used = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    is_paid = models.BooleanField(default=False)
+    paid_at = models.DateTimeField(null=True, blank=True)
     before_photo = models.ImageField(upload_to="orders/before/", null=True, blank=True)
     completion_photo = models.ImageField(upload_to="orders/completions/", null=True, blank=True)
     receipt_approved_at = models.DateTimeField(null=True, blank=True)

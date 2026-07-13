@@ -22,6 +22,10 @@ class Service(TimeStampedUUIDModel):
     name = models.CharField(max_length=160)
     description = models.TextField(blank=True)
     base_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Fiscal (Payme OFD receipt). Blank MXIK => fiscal detail is skipped (allow-only).
+    mxik = models.CharField("IKPU/MXIK", max_length=32, blank=True)
+    package_code = models.CharField(max_length=32, blank=True)
+    vat_percent = models.PositiveSmallIntegerField("QQS %", default=12)
     is_active = models.BooleanField(default=True)
 
     class Meta:
