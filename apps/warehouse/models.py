@@ -26,6 +26,10 @@ class WarehouseProduct(TimeStampedUUIDModel):
     low_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     cost_price = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     sale_price = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # Fiscal (Payme OFD receipt). Blank MXIK => fiscal detail is skipped (allow-only).
+    mxik = models.CharField("IKPU/MXIK", max_length=32, blank=True)
+    package_code = models.CharField(max_length=32, blank=True)
+    vat_percent = models.PositiveSmallIntegerField("QQS %", default=12)
     image = models.ImageField(upload_to="warehouse/products/", null=True, blank=True)
     is_active = models.BooleanField(default=True)
 

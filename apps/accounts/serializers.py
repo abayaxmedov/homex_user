@@ -15,6 +15,16 @@ from apps.common.phone import normalize_phone
 from apps.integrations.adapters import send_otp_async
 
 
+def _playmarket_test_phone():
+    return normalize_phone(getattr(settings, "PLAYMARKET_TEST_PHONE", ""))
+
+
+def _is_playmarket_test_phone(phone):
+    configured_phone = _playmarket_test_phone()
+    configured_otp = getattr(settings, "PLAYMARKET_TEST_OTP", "")
+    return bool(configured_phone and configured_otp) and phone == configured_phone
+
+
 class MasterSummarySerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     distance_km = serializers.SerializerMethodField()
@@ -204,12 +214,16 @@ class SendOTPSerializer(serializers.Serializer):
         # Normalize first so every format variant (+998.., 998.., dashes) collapses
         # to ONE cooldown key — otherwise the per-phone cooldown is trivially bypassed.
         value = normalize_phone(value)
+        if _is_playmarket_test_phone(value):
+            return value
         if cache.get(f"otp:cooldown:{value}"):
             raise serializers.ValidationError("OTP so'rovi uchun 3 daqiqa kuting")
         return value
 
     def create(self, validated_data):
         phone = validated_data["phone"]  # already normalized in validate_phone
+        if _is_playmarket_test_phone(phone):
+            return {"phone": phone, "expires_in": settings.OTP_TTL_SECONDS}
         code = f"{random.randint(0, 999999):06d}"
         expires_at = timezone.now() + timedelta(seconds=settings.OTP_TTL_SECONDS)
         OTPRecord.objects.create(phone=phone, code=code, expires_at=expires_at)
@@ -228,6 +242,11 @@ class VerifyOTPSerializer(serializers.Serializer):
     def validate(self, attrs):
         phone = normalize_phone(attrs["phone"])  # same canonical form as send-otp
         attrs["phone"] = phone
+        if _is_playmarket_test_phone(phone):
+            if attrs["otp_code"] != getattr(settings, "PLAYMARKET_TEST_OTP", ""):
+                raise serializers.ValidationError("OTP kodi noto'g'ri")
+            attrs["record"] = None
+            return attrs
         if cache.get(f"otp:block:{phone}"):
             raise serializers.ValidationError("Ko'p noto'g'ri urinish. 15 daqiqa kuting")
         payload = cache.get(f"otp:{phone}")
@@ -249,8 +268,9 @@ class VerifyOTPSerializer(serializers.Serializer):
     def create(self, validated_data):
         phone = validated_data["phone"]
         record = validated_data["record"]
-        record.is_used = True
-        record.save(update_fields=["is_used"])
+        if record is not None:
+            record.is_used = True
+            record.save(update_fields=["is_used"])
         client, created = Client.objects.get_or_create(phone=phone)
         tokens = issue_role_tokens(client, "client")
         tokens["is_new"] = created or not client.first_name

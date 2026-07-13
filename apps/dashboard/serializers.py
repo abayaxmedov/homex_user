@@ -6,6 +6,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.db.models import Sum
 from django.urls import reverse
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import TokenError
@@ -1353,12 +1354,17 @@ class DashboardMarketProductImageSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at", "updated_at")
 
 
+@extend_schema_field(OpenApiTypes.BINARY)
+class _UploadImageField(serializers.ImageField):
+    """ImageField that Swagger renders as a file upload (format: binary), not a URI."""
+
+
 class DashboardMarketProductSerializer(serializers.ModelSerializer):
     category_detail = DashboardMarketCategorySerializer(source="category", read_only=True)
     seller_detail = DashboardClientMiniSerializer(source="seller", read_only=True)
     images = DashboardMarketProductImageSerializer(many=True, read_only=True)
     uploaded_images = serializers.ListField(
-        child=serializers.ImageField(),
+        child=_UploadImageField(),
         write_only=True,
         required=False,
         help_text="Bitta so'rovda mahsulot bilan birga yuklanadigan rasmlar (alohida image API shart emas).",

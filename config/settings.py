@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.internal_api",
     "apps.web",
+    "apps.payme",
 ]
 
 MIDDLEWARE = [
@@ -241,6 +242,8 @@ OTP_TTL_SECONDS = 120
 OTP_SEND_COOLDOWN_SECONDS = 180
 OTP_MAX_ATTEMPTS = 5
 OTP_BLOCK_SECONDS = 900
+PLAYMARKET_TEST_PHONE = os.getenv("PLAYMARKET_TEST_PHONE", "")
+PLAYMARKET_TEST_OTP = os.getenv("PLAYMARKET_TEST_OTP", "")
 
 ACCESS_TOKEN_DAYS = 3
 REFRESH_TOKEN_DAYS = 15
@@ -265,6 +268,27 @@ SMS_PROVIDER = os.getenv("SMS_PROVIDER", "stub").lower()
 SMS_EMAIL = os.getenv("SMS_EMAIL", "")
 SMS_PASSWORD = os.getenv("SMS_PASSWORD", "")
 SMS_FROM = os.getenv("SMS_FROM", "4546")
+
+# ---------------------------------------------------------------------------
+# Payme (Paycom) Merchant API. All secrets come from the environment only.
+# Endpoint handed to the Payme kassa: POST /api/v1/payme/
+# ---------------------------------------------------------------------------
+PAYME_MERCHANT_ID = os.getenv("PAYME_MERCHANT_ID", "")
+PAYME_KEY = os.getenv("PAYME_KEY", "")
+PAYME_TEST_KEY = os.getenv("PAYME_TEST_KEY", "")
+# Which key the webhook accepts and which checkout host links point at.
+PAYME_TEST_MODE = env_bool("PAYME_TEST_MODE", DEBUG)
+# Account field name — MUST match the field configured in the Payme kassa.
+PAYME_ACCOUNT_FIELD = os.getenv("PAYME_ACCOUNT_FIELD", "order_id")
+# Optional explicit checkout host; blank -> test/checkout.paycom.uz by test mode.
+PAYME_CHECKOUT_URL = os.getenv("PAYME_CHECKOUT_URL", "")
+# Deep link the app is returned to after checkout (UX only — not the source of truth).
+PAYME_RETURN_DEEPLINK = os.getenv("PAYME_RETURN_DEEPLINK", "homex://payment/result")
+PAYME_CHECKOUT_LANG = os.getenv("PAYME_CHECKOUT_LANG", "uz")
+# Block a second active transaction for the same order.
+PAYME_ONE_TIME_PAYMENT = env_bool("PAYME_ONE_TIME_PAYMENT", True)
+# Optional webhook source-IP allow-list (comma-separated); blank disables the check.
+PAYME_ALLOWED_IPS = [ip.strip() for ip in os.getenv("PAYME_ALLOWED_IPS", "").split(",") if ip.strip()]
 
 UNFOLD = {
     "SITE_TITLE": "HomeX Admin",
