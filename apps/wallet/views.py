@@ -1,7 +1,9 @@
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
 
@@ -57,6 +59,48 @@ class WithdrawRequestCreateView(EnvelopeMixin, generics.CreateAPIView):
         serializer.save(master=self.request.user)
 
 
+def _income_between(master, start, end):
+    return WalletTransaction.objects.filter(
+        master=master,
+        transaction_type=WalletTransaction.IN,
+        created_at__gte=start,
+        created_at__lt=end,
+    ).aggregate(amount=Sum("amount"))["amount"] or Decimal("0.00")
+
+
+def _change_percent(current, previous):
+    if previous:
+        return round(float((current - previous) / previous * 100), 1)
+    return None  # o'tган davrda baza yo'q — foiz hisoblanmaydi
+
+
+def _period_income_stats(master):
+    """Bu hafta / bu oy kirimi (IN) + o'tган davrga nisbatan o'zgarish %.
+
+    Kalendar hafta (dushanbadan) va oy (1-sanadan); joriy davr (start -> hozir)
+    o'tган TO'LIQ davr bilan solishtiriladi.
+    """
+    today = timezone.localtime(timezone.now()).date()
+
+    def _aware(d):
+        return timezone.make_aware(datetime.combine(d, time.min))
+
+    week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+    last_week_start = week_start - timedelta(days=7)
+    last_month_start = (month_start - timedelta(days=1)).replace(day=1)
+    now = timezone.now()
+
+    week_now = _income_between(master, _aware(week_start), now)
+    week_prev = _income_between(master, _aware(last_week_start), _aware(week_start))
+    month_now = _income_between(master, _aware(month_start), now)
+    month_prev = _income_between(master, _aware(last_month_start), _aware(month_start))
+    return {
+        "this_week": {"amount": week_now, "change_percent": _change_percent(week_now, week_prev)},
+        "this_month": {"amount": month_now, "change_percent": _change_percent(month_now, month_prev)},
+    }
+
+
 @extend_schema(tags=["Master Wallet"])
 class WalletStatsView(generics.GenericAPIView):
     permission_classes = [IsMaster]
@@ -72,9 +116,12 @@ class WalletStatsView(generics.GenericAPIView):
             master=request.user, status=WithdrawRequest.PENDING
         ).aggregate(amount=Sum("amount"))["amount"] or Decimal("0.00")
         withdrawable = max(wallet.balance_cash - pending_withdraw, Decimal("0.00"))
+        period = _period_income_stats(request.user)
         return success_response(
             {
                 "total_income": total,
+                "this_week": period["this_week"],
+                "this_month": period["this_month"],
                 "balance_online": wallet.balance_online,
                 "balance_cash": wallet.balance_cash,
                 "total_balance": wallet.total_balance,
