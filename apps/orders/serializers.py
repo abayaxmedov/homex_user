@@ -369,9 +369,29 @@ class OrderCompleteSerializer(serializers.Serializer):
     completion_photo = UploadImageField(required=False)
     used_items = JSONListField(child=OrderCompleteUsedItemSerializer(), required=False)
 
+    # Completing an order credits the master's wallet + deducts inventory, so it must
+    # run exactly once. Re-completing a finished/terminal order would double-credit the
+    # cash balance and double-deduct stock — block anything not in an active state.
+    COMPLETABLE_STATUSES = (OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED)
+
+    def validate(self, attrs):
+        order = self.context["order"]
+        if order.status not in self.COMPLETABLE_STATUSES:
+            if order.status == OrderStatus.COMPLETED:
+                raise serializers.ValidationError("Buyurtma allaqachon yakunlangan")
+            raise serializers.ValidationError(
+                "Buyurtmani bu holatda yakunlab bo'lmaydi (qabul qilingan / yo'lda / yetib kelgan bo'lishi kerak)"
+            )
+        return attrs
+
     @transaction.atomic
     def save(self, **kwargs):
-        order = self.context["order"]
+        # Lock the order row and re-check status inside the transaction so two
+        # concurrent complete requests can't both pass validate() and each credit
+        # the wallet (double-payment race). On Postgres this is a real row lock.
+        order = Order.objects.select_for_update().get(pk=self.context["order"].pk)
+        if order.status not in self.COMPLETABLE_STATUSES:
+            raise serializers.ValidationError("Buyurtma allaqachon yakunlangan")
         order.service_fee = self.validated_data["service_fee"]
         if self.validated_data.get("completion_photo"):
             order.completion_photo = self.validated_data["completion_photo"]

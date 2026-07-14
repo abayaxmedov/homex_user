@@ -285,3 +285,40 @@ def test_support_chat_tracks_history_unread_and_admin_reply(client_api, client_u
     assert unread_after_reply == 1
     assert marked is True
     assert chat.unread_by_admin == 0
+
+
+def test_dashboard_admin_reply_reaches_client_thread(admin_api, client_api, client_user, django_admin_user):
+    """Admin reply sent through the dashboard REST endpoint must be attached to
+    the participant's SupportChat — the client app reads the thread through the
+    ``chat`` FK, so an orphan (chat=NULL) message never reaches the user."""
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    from apps.support.services import support_group
+
+    # Subscribe to the client's support group the same way the consumer does,
+    # so we can assert the dashboard reply is broadcast in realtime too.
+    channel_layer = get_channel_layer()
+    client_channel = async_to_sync(channel_layer.new_channel)()
+    async_to_sync(channel_layer.group_add)(support_group("client", client_user.id), client_channel)
+
+    response = admin_api.post(
+        reverse("dashboard-support-messages"),
+        {"client": str(client_user.id), "message": "Admin dashboard javobi", "sender_role": "admin"},
+        format="json",
+    )
+    assert response.status_code == 201
+
+    message = SupportMessage.objects.get(sender_role="admin", client=client_user)
+    chat = SupportChat.objects.get(client=client_user)
+    assert message.chat_id == chat.id
+    assert message.admin == django_admin_user
+
+    history = client_api.get(reverse("client-support"))
+    assert history.status_code == 200
+    contents = [row["content"] for row in history.data["results"]]
+    assert "Admin dashboard javobi" in contents
+
+    event = async_to_sync(channel_layer.receive)(client_channel)
+    assert event["type"] == "chat.message"
+    assert event["message"]["content"] == "Admin dashboard javobi"
