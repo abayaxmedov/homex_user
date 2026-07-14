@@ -151,3 +151,46 @@ def test_dashboard_cash_handover_list_defaults_to_pending(master, admin_api):
     assert row["status"] == "pending"
     assert row["master_detail"]["id"] == str(master.id)
     assert approved.data["count"] == 1
+
+
+def test_wallet_stats_this_week_and_month_income(master_api, master):
+    from datetime import datetime, time, timedelta
+    from decimal import Decimal
+
+    from django.utils import timezone
+
+    today = timezone.localtime(timezone.now()).date()
+    last_week_day = today - timedelta(days=today.weekday()) - timedelta(days=3)  # solidly last week
+
+    # this-week income (created now)
+    WalletTransaction.objects.create(
+        master=master, transaction_type=WalletTransaction.IN, amount=Decimal("150000"),
+        description="this week", payment_method=WalletTransaction.CASH,
+    )
+    # last-week income (backdated to compute the change %)
+    prev = WalletTransaction.objects.create(
+        master=master, transaction_type=WalletTransaction.IN, amount=Decimal("100000"),
+        description="last week", payment_method=WalletTransaction.CASH,
+    )
+    WalletTransaction.objects.filter(id=prev.id).update(
+        created_at=timezone.make_aware(datetime.combine(last_week_day, time(12, 0)))
+    )
+
+    data = master_api.get(reverse("master-wallet-stats")).data["data"]
+
+    assert data["this_week"]["amount"] == Decimal("150000")           # only the current-week txn
+    assert data["this_week"]["change_percent"] == 50.0                # (150k - 100k) / 100k * 100
+    assert data["this_month"]["amount"] >= Decimal("150000")
+
+
+def test_wallet_stats_change_percent_none_without_baseline(master_api, master):
+    from decimal import Decimal
+
+    WalletTransaction.objects.create(
+        master=master, transaction_type=WalletTransaction.IN, amount=Decimal("70000"),
+        description="only this week", payment_method=WalletTransaction.CASH,
+    )
+    data = master_api.get(reverse("master-wallet-stats")).data["data"]
+
+    assert data["this_week"]["amount"] == Decimal("70000")
+    assert data["this_week"]["change_percent"] is None  # o'tган hafta 0 -> baza yo'q
