@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
@@ -41,12 +42,33 @@ class RoleJWTAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        headers = dict(scope.get("headers") or [])
-        auth_header = headers.get(b"authorization", b"").decode()
-        parts = auth_header.split()
-        token = parts[1] if len(parts) == 2 and parts[0].lower() == "bearer" else None
+        token = self._extract_token(scope)
         if token:
             scope["user"] = await get_role_user(token)
         elif "user" not in scope:
             scope["user"] = None
         return await self.app(scope, receive, send)
+
+    @staticmethod
+    def _extract_token(scope):
+        """Return the JWT from the connection, or ``None``.
+
+        Two transports are supported, header first:
+
+        1. ``Authorization: Bearer <token>`` header — native clients, proxies.
+        2. ``?token=<token>`` (or ``access_token``) query param — browsers can't
+           set custom headers on ``new WebSocket()``, so the query string is the
+           only way a browser client can authenticate. Prefer WSS so the token
+           stays encrypted in transit; note it may still surface in proxy logs.
+        """
+        headers = dict(scope.get("headers") or [])
+        auth_header = headers.get(b"authorization", b"").decode()
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1]
+
+        query = parse_qs(scope.get("query_string", b"").decode())
+        values = query.get("token") or query.get("access_token")
+        if values and values[0]:
+            return values[0]
+        return None

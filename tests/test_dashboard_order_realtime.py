@@ -21,12 +21,12 @@ TIMEOUT = 3
 
 
 class WebsocketCommunicator(ApplicationCommunicator):
-    def __init__(self, application, path, headers=None):
+    def __init__(self, application, path, headers=None, query_string=b""):
         scope = {
             "type": "websocket",
             "path": path,
             "raw_path": path.encode(),
-            "query_string": b"",
+            "query_string": query_string,
             "headers": headers or [],
             "subprotocols": [],
         }
@@ -68,6 +68,15 @@ def role_headers(user, role):
     return [(b"authorization", f"Bearer {token}".encode())]
 
 
+def dashboard_token(user):
+    access = AccessToken()
+    access.set_exp(from_time=timezone.now(), lifetime=timedelta(days=settings.ACCESS_TOKEN_DAYS))
+    access["sub"] = str(user.id)
+    access["role"] = "admin"
+    access["username"] = user.get_username()
+    return str(access)
+
+
 def make_order(client_user, service, **kwargs):
     defaults = {
         "client": client_user,
@@ -98,6 +107,31 @@ def test_dashboard_orders_ws_accepts_staff_header_token_only(django_admin_user, 
             ws = WebsocketCommunicator(make_app(), "/ws/dashboard/orders/", headers=headers)
             connected, _ = await ws.connect(timeout=TIMEOUT)
             assert connected is False
+
+    async_to_sync(scenario)()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_dashboard_orders_ws_accepts_query_param_token(django_admin_user):
+    """Browsers can't send headers on `new WebSocket()`, so ?token= must also auth."""
+
+    async def scenario():
+        token = dashboard_token(django_admin_user)
+        ws = WebsocketCommunicator(
+            make_app(),
+            "/ws/dashboard/orders/",
+            query_string=f"token={token}".encode(),
+        )
+        connected, _ = await ws.connect(timeout=TIMEOUT)
+        assert connected
+        await ws.disconnect()
+
+        # Invalid query token -> rejected.
+        bad = WebsocketCommunicator(
+            make_app(), "/ws/dashboard/orders/", query_string=b"token=not-a-jwt"
+        )
+        connected, _ = await bad.connect(timeout=TIMEOUT)
+        assert connected is False
 
     async_to_sync(scenario)()
 

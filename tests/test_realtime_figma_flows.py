@@ -539,7 +539,12 @@ def test_client_home_banner_image_is_exposed_in_api(client_api):
     assert banner["banner_url"] == banner["banner_image"]
 
 
-def test_websocket_auth_reads_authorization_header_not_query(master):
+def test_websocket_auth_accepts_header_or_query_token(master):
+    """WS auth reads the Authorization header first, then falls back to ?token=.
+
+    Browsers can't set custom headers on `new WebSocket()`, so the query-param
+    fallback is what lets a browser client authenticate.
+    """
     captured = {}
 
     async def app(scope, receive, send):
@@ -548,6 +553,7 @@ def test_websocket_auth_reads_authorization_header_not_query(master):
     middleware = RoleJWTAuthMiddleware(app)
     token = issue_role_tokens(master, "master")["access_token"]
 
+    # 1) Authorization header.
     async_to_sync(middleware)(
         {"headers": [(b"authorization", f"Bearer {token}".encode())], "query_string": b""},
         None,
@@ -555,9 +561,25 @@ def test_websocket_auth_reads_authorization_header_not_query(master):
     )
     assert captured["user"] == master
 
+    # 2) ?token= query param (browser transport).
     async_to_sync(middleware)(
         {"headers": [], "query_string": f"token={token}".encode()},
         None,
         None,
     )
+    assert captured["user"] == master
+
+    # 3) ?access_token= alias also works.
+    async_to_sync(middleware)(
+        {"headers": [], "query_string": f"access_token={token}".encode()},
+        None,
+        None,
+    )
+    assert captured["user"] == master
+
+    # 4) No credentials / garbage token -> anonymous (consumer will reject).
+    async_to_sync(middleware)({"headers": [], "query_string": b"token=not-a-jwt"}, None, None)
+    assert captured["user"] is None
+
+    async_to_sync(middleware)({"headers": [], "query_string": b""}, None, None)
     assert captured["user"] is None
