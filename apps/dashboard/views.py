@@ -38,9 +38,14 @@ from apps.orders.models import Order, OrderStatus
 from apps.profiles.models import Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory, ServicePrice
 from apps.support.models import SupportChat, SupportMessage
-from apps.support.services import attach_latest_support_messages, with_latest_support_message
-from apps.support.models import SupportMessage
-from apps.support.services import mark_support_thread_read_by_admin
+from apps.support.services import (
+    attach_latest_support_messages,
+    broadcast_support_message,
+    get_or_create_support_chat,
+    mark_support_thread_read_by_admin,
+    touch_chat,
+    with_latest_support_message,
+)
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
 from apps.wallet.services import accept_cash_handover, reject_cash_handover
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
@@ -1823,7 +1828,19 @@ class DashboardSupportMessageListCreateAPIView(DashboardPermissionMixin, Envelop
         return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        serializer.save(sender_role="admin")
+        # The client/master apps read the thread through the ``chat`` FK
+        # (SupportChat.messages), so an admin reply saved without it never
+        # reaches the participant. Attach the chat and emit the same realtime
+        # broadcast the participant-facing endpoints use.
+        message = serializer.save(sender_role="admin", admin=self.request.user)
+        if not message.chat:
+            participant = message.client or message.master
+            chat = get_or_create_support_chat(participant) if participant else None
+            if chat:
+                message.chat = chat
+                message.save(update_fields=["chat", "updated_at"])
+                touch_chat(chat)
+        broadcast_support_message(message)
 
 
 @extend_schema(
