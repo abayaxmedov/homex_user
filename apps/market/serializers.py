@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from apps.accounts.serializers import ClientSerializer
 from apps.market.models import MarketCategory, MarketFavorite, MarketOrder, MarketProduct, MarketProductImage
+from apps.market.services import place_market_order
 
 
 class MarketCategorySerializer(serializers.ModelSerializer):
@@ -90,6 +91,10 @@ class MarketOrderSerializer(serializers.ModelSerializer):
             "status": {"help_text": "`pending`, `confirmed`, `delivered`, `cancelled`."},
             "total_amount": {"help_text": "product.price * quantity."},
         }
+
+    def create(self, validated_data):
+        # Reserve stock (locked, validated) instead of creating with no stock effect.
+        return place_market_order(**validated_data)
 
 
 class MarketFavoriteSerializer(serializers.ModelSerializer):

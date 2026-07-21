@@ -42,6 +42,56 @@ def accept_cash_handover(handover, note=""):
 
 
 @transaction.atomic
+def post_wallet_transaction(*, master, transaction_type, amount, payment_method, description="", order=None):
+    """Create a :class:`WalletTransaction` AND move the wallet balance atomically.
+
+    Single source of truth so a ledger row can't be written without the matching
+    balance change. IN credits, OUT debits the cash/online balance that matches
+    ``payment_method``. Wallet row is locked; balance updates use ``F()``.
+    """
+    if amount <= 0:
+        raise serializers.ValidationError({"amount": "Summa musbat bo'lishi kerak"})
+    wallet, _ = MasterWallet.objects.get_or_create(master=master)
+    wallet = MasterWallet.objects.select_for_update().get(pk=wallet.pk)
+    balance_field = "balance_cash" if payment_method == WalletTransaction.CASH else "balance_online"
+    if transaction_type == WalletTransaction.IN:
+        updates = {balance_field: F(balance_field) + amount, "total_earned": F("total_earned") + amount}
+    else:
+        if getattr(wallet, balance_field) < amount:
+            raise serializers.ValidationError({"amount": "Balans yetarli emas"})
+        updates = {balance_field: F(balance_field) - amount, "total_withdrawn": F("total_withdrawn") + amount}
+    MasterWallet.objects.filter(pk=wallet.pk).update(updated_at=timezone.now(), **updates)
+    return WalletTransaction.objects.create(
+        master=master,
+        transaction_type=transaction_type,
+        amount=amount,
+        description=description,
+        payment_method=payment_method,
+        order=order,
+    )
+
+
+@transaction.atomic
+def reverse_wallet_transaction(txn):
+    """Undo a WalletTransaction's balance effect (for delete). Locked; guards negative.
+
+    Reversing an IN debits the balance back — rejected if the master already spent it.
+    """
+    wallet, _ = MasterWallet.objects.get_or_create(master=txn.master)
+    wallet = MasterWallet.objects.select_for_update().get(pk=wallet.pk)
+    balance_field = "balance_cash" if txn.payment_method == WalletTransaction.CASH else "balance_online"
+    if txn.transaction_type == WalletTransaction.IN:
+        if getattr(wallet, balance_field) < txn.amount:
+            raise serializers.ValidationError(
+                {"amount": "Bu tranzaksiyani bekor qilib bo'lmaydi — balans yetarli emas (mablag' sarflangan)"}
+            )
+        updates = {balance_field: F(balance_field) - txn.amount, "total_earned": F("total_earned") - txn.amount}
+    else:
+        updates = {balance_field: F(balance_field) + txn.amount, "total_withdrawn": F("total_withdrawn") - txn.amount}
+    MasterWallet.objects.filter(pk=wallet.pk).update(updated_at=timezone.now(), **updates)
+
+
+@transaction.atomic
 def reject_cash_handover(handover, note=""):
     """Admin declines a pending cash handover (no balance change)."""
     handover = WithdrawRequest.objects.select_for_update().get(pk=handover.pk)

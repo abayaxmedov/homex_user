@@ -4,7 +4,8 @@ from django.db import transaction
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
+from apps.warehouse.models import MasterInventory, WarehouseCategory, WarehouseProduct
+from apps.warehouse.services import adjust_master_inventory, assign_inventory_to_master
 
 
 class WarehouseCategorySerializer(serializers.ModelSerializer):
@@ -75,67 +76,29 @@ class MasterInventorySerializer(serializers.ModelSerializer):
 
 class AdminAssignInventorySerializer(serializers.Serializer):
     warehouse_product_id = serializers.UUIDField()
-    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
 
     def validate(self, attrs):
-        product = WarehouseProduct.objects.get(id=attrs["warehouse_product_id"], is_active=True)
-        if product.quantity < attrs["quantity"]:
-            raise serializers.ValidationError("Omborda yetarli mahsulot yo'q")
-        attrs["product"] = product
+        try:
+            attrs["product"] = WarehouseProduct.objects.get(id=attrs["warehouse_product_id"], is_active=True)
+        except WarehouseProduct.DoesNotExist:
+            raise serializers.ValidationError({"warehouse_product_id": "Mahsulot topilmadi yoki faol emas"})
         return attrs
 
-    @transaction.atomic
     def save(self, **kwargs):
-        master = self.context["master"]
-        product = self.validated_data["product"]
-        quantity = self.validated_data["quantity"]
-        item, _ = MasterInventory.objects.select_for_update().get_or_create(
-            master=master,
-            warehouse_product=product,
-            defaults={
-                "quantity": 0,
-                "unit": product.unit,
-                "low_threshold": product.low_threshold,
-                "image": product.image,
-            },
+        return assign_inventory_to_master(
+            master=self.context["master"],
+            product=self.validated_data["product"],
+            quantity=self.validated_data["quantity"],
         )
-        item.quantity += quantity
-        item.save()
-        product.quantity -= quantity
-        product.save(update_fields=["quantity", "updated_at"])
-        StockMovement.objects.create(
-            product=product,
-            movement_type=StockMovement.OUT,
-            quantity=quantity,
-            master=master,
-            note=f"Ustaga biriktirildi: {master}",
-        )
-        return item
 
 
 class AdminUpdateInventorySerializer(serializers.Serializer):
     quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
 
-    @transaction.atomic
     def save(self, **kwargs):
-        item = self.context["item"]
-        product = item.warehouse_product
-        new_quantity = self.validated_data["quantity"]
-        delta = new_quantity - item.quantity
-        if delta > 0 and product.quantity < delta:
-            raise serializers.ValidationError("Omborda yetarli mahsulot yo'q")
-        product.quantity -= delta
-        product.save(update_fields=["quantity", "updated_at"])
-        item.quantity = new_quantity
-        item.save(update_fields=["quantity", "updated_at"])
-        StockMovement.objects.create(
-            product=product,
-            movement_type=StockMovement.OUT if delta > 0 else StockMovement.IN,
-            quantity=abs(delta),
-            master=item.master,
-            note=f"Usta biriktirish miqdori o'zgardi: {item.master}",
-        )
-        return item
+        # Delegates to the locked service (moves warehouse delta + records StockMovement).
+        return adjust_master_inventory(self.context["item"], self.validated_data["quantity"])
 
 
 class UseInventorySerializer(serializers.Serializer):

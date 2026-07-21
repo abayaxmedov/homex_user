@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Avg, F, Q, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -20,7 +21,7 @@ from apps.common.views import EnvelopeMixin
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
 from apps.orders.models import ACTIVE_ORDER_STATUSES, HomeBanner, Order, OrderMaster, OrderStatus, Review
-from apps.orders.receipts import DOCX_CONTENT_TYPE, build_order_receipt_docx, order_receipt_filename
+from apps.orders.receipts import PDF_CONTENT_TYPE, build_order_receipt_pdf, order_receipt_filename
 from apps.orders.serializers import (
     MasterLocationSerializer,
     MapConfigSerializer,
@@ -51,6 +52,26 @@ ORDER_STATUS_TEXT = (
     "`arrived` - usta yetib keldi; `completed` - usta ishni tugatgan; `cancelled` - client bekor qilgan; "
     "`rejected` - master rad qilgan."
 )
+
+# Statuses a completed order can no longer leave — mutating status out of these
+# would corrupt an order whose wallet/inventory side effects already ran.
+TERMINAL_ORDER_STATUSES = (OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REJECTED)
+
+
+def lock_order_for_transition(pk, *, allowed_statuses, **filters):
+    """Fetch + row-lock an order for a status transition, guarding the source state.
+
+    Must run inside ``transaction.atomic()``. Scopes by ``filters`` (e.g.
+    ``client=request.user``) so a 404 keeps ownership semantics, and raises a 400
+    when the order is not in ``allowed_statuses`` — preventing a status flip that
+    would re-run notifications / corrupt an already-finished order.
+    """
+    order = get_object_or_404(Order.objects.select_for_update(), pk=pk, **filters)
+    if order.status not in allowed_statuses:
+        raise ValidationError(
+            {"status": f"Buyurtma holati bu amalni bajarishga imkon bermaydi (joriy holat: {order.status})"}
+        )
+    return order
 
 ORDER_CREATE_EXAMPLE = {
     "service": "service_uuid",
@@ -250,6 +271,7 @@ class MasterOrderAcceptView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = OrderSerializer
 
+    @transaction.atomic
     def post(self, request, pk):
         # Only a master the admin assigned to this order may accept it.
         assignment = get_object_or_404(
@@ -258,7 +280,9 @@ class MasterOrderAcceptView(generics.GenericAPIView):
             master=request.user,
             is_active=True,
         )
-        order = assignment.order
+        # Lock the order row and re-read status so two assigned masters accepting
+        # concurrently can't both become the lead master (accept race).
+        order = Order.objects.select_for_update().get(pk=assignment.order_id)
         if order.status == OrderStatus.NEW:
             order.master = request.user  # first to accept becomes the lead master
             order.status = OrderStatus.ACCEPTED
@@ -282,10 +306,9 @@ class MasterOrderOnWayView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = OrderSerializer
 
+    @transaction.atomic
     def post(self, request, pk):
-        order = get_object_or_404(Order, pk=pk, master=request.user)
-        if order.status != OrderStatus.ACCEPTED:
-            raise ValidationError({"status": "Order faqat 'accepted' holatidan 'on_way' holatiga o'tadi"})
+        order = lock_order_for_transition(pk, allowed_statuses=(OrderStatus.ACCEPTED,), master=request.user)
         order.status = OrderStatus.ON_WAY
         order.save(update_fields=["status", "updated_at"])
         ensure_tracking(order)
@@ -322,10 +345,21 @@ class MasterOrderRejectView(generics.GenericAPIView):
     permission_classes = [IsMaster]
     serializer_class = OrderRejectSerializer
 
+    @transaction.atomic
     def post(self, request, pk):
-        order = get_object_or_404(Order, pk=pk, master=request.user)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # A master may reject only before completion — never a completed/terminal order.
+        order = lock_order_for_transition(
+            pk,
+            allowed_statuses=(
+                OrderStatus.NEW,
+                OrderStatus.ACCEPTED,
+                OrderStatus.ON_WAY,
+                OrderStatus.ARRIVED,
+            ),
+            master=request.user,
+        )
         order.status = OrderStatus.REJECTED
         order.rejected_reason = serializer.validated_data["reason"]
         order.save(update_fields=["status", "rejected_reason", "updated_at"])
@@ -379,7 +413,7 @@ class MasterOrderCompleteView(generics.GenericAPIView):
 @extend_schema(
     tags=["Master Orders"],
     summary="Checkni tasdiqlash va clientga ochish",
-    description="Order completed bo'lgandan keyin master checkni tasdiqlaydi. Shundan keyin client Word checkni yuklab oladi.",
+    description="Order completed bo'lgandan keyin master checkni tasdiqlaydi. Shundan keyin client PDF checkni yuklab oladi.",
     request=None,
     responses=OrderSerializer,
 )
@@ -395,7 +429,7 @@ class MasterOrderReceiptConfirmView(generics.GenericAPIView):
                 role="client",
                 client=order.client,
                 title="Check tayyor",
-                body="Usta checkni tasdiqladi. Endi Word faylni yuklab olishingiz mumkin.",
+                body="Usta checkni tasdiqladi. Endi PDF faylni yuklab olishingiz mumkin.",
                 data={
                     "order_id": str(order.id),
                     "status": order.status,
@@ -689,10 +723,17 @@ class ClientOrderCancelView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = OrderCancelSerializer
 
+    @transaction.atomic
     def post(self, request, pk):
-        order = get_object_or_404(Order, pk=pk, client=request.user)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # Only NEW/ACCEPTED/ON_WAY orders can be cancelled (matches get_can_cancel);
+        # cancelling a completed/terminal order would strand the master's payout.
+        order = lock_order_for_transition(
+            pk,
+            allowed_statuses=(OrderStatus.NEW, OrderStatus.ACCEPTED, OrderStatus.ON_WAY),
+            client=request.user,
+        )
         order.status = OrderStatus.CANCELLED
         order.cancel_reason = serializer.validated_data["reason"]
         order.save(update_fields=["status", "cancel_reason", "updated_at"])
@@ -730,8 +771,8 @@ class ClientOrderTrackView(generics.GenericAPIView):
 
 @extend_schema(
     tags=["Client Orders"],
-    summary="Order check Word faylini yuklab olish",
-    description="Client faqat usta checkni tasdiqlagandan keyin `.docx` checkni yuklab oladi.",
+    summary="Order check PDF faylini yuklab olish",
+    description="Client faqat usta checkni tasdiqlagandan keyin `.pdf` checkni yuklab oladi.",
     responses={200: OpenApiTypes.BINARY},
 )
 class ClientOrderReceiptDownloadView(generics.GenericAPIView):
@@ -749,8 +790,8 @@ class ClientOrderReceiptDownloadView(generics.GenericAPIView):
         if order.status != OrderStatus.COMPLETED or not order.receipt_approved_at:
             raise PermissionDenied("Check hali usta tomonidan tasdiqlanmagan")
 
-        content = build_order_receipt_docx(order, request=request)
-        response = HttpResponse(content, content_type=DOCX_CONTENT_TYPE)
+        content = build_order_receipt_pdf(order, request=request)
+        response = HttpResponse(content, content_type=PDF_CONTENT_TYPE)
         response["Content-Disposition"] = f'attachment; filename="{order_receipt_filename(order)}"'
         return response
 
@@ -762,6 +803,10 @@ class ClientOrderRateView(generics.GenericAPIView):
 
     def post(self, request, pk):
         order = get_object_or_404(Order, pk=pk, client=request.user, status=OrderStatus.COMPLETED)
+        # Review.order is one-to-one — guard the duplicate so it's a clean 400, not an
+        # IntegrityError 500 (matches OrderSerializer.get_can_rate).
+        if hasattr(order, "review"):
+            raise ValidationError({"detail": "Bu buyurtma allaqachon baholangan"})
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         review = serializer.save(order=order, client=request.user, master=order.master)
@@ -781,8 +826,15 @@ class ClientOrderPayView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = PaymentStartSerializer
 
+    @transaction.atomic
     def post(self, request, pk):
-        order = get_object_or_404(Order, pk=pk, client=request.user)
+        order = get_object_or_404(Order.objects.select_for_update(), pk=pk, client=request.user)
+        # Can't (re)start payment on a terminal or already-paid order — that would
+        # rewrite bonus_used/total_amount and re-trigger the external payment call.
+        if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED):
+            raise ValidationError({"status": "Bekor qilingan yoki rad etilgan buyurtma uchun to'lov qilinmaydi"})
+        if order.is_paid:
+            raise ValidationError({"status": "Buyurtma allaqachon to'langan"})
         serializer = self.get_serializer(data=request.data, context={"order": order})
         serializer.is_valid(raise_exception=True)
         payment = serializer.save()

@@ -64,5 +64,8 @@ class MarketOrder(TimeStampedUUIDModel):
     status = models.CharField(max_length=20, choices=STATUSES, default=PENDING)
 
     def save(self, *args, **kwargs):
-        self.total_amount = self.product.price * self.quantity
+        # Snapshot the price at purchase time only — never re-price a historical order
+        # on later edits (e.g. an admin status change) from the current product price.
+        if self._state.adding:
+            self.total_amount = self.product.price * self.quantity
         super().save(*args, **kwargs)

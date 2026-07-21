@@ -1,32 +1,104 @@
 from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 from xml.sax.saxutils import escape
-from zipfile import ZIP_DEFLATED, ZipFile
 
 from django.utils import timezone
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
-DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+PDF_CONTENT_TYPE = "application/pdf"
+
+# DejaVu (bundled under fonts/) is used instead of reportlab's built-in Helvetica/Vera
+# because those cover neither Cyrillic nor the Uzbek turned comma (oʻ / gʻ, U+02BB),
+# which appear in client names, addresses and notes.
+FONT_DIR = Path(__file__).resolve().parent / "fonts"
+FONT_REGULAR = "DejaVuSans"
+FONT_BOLD = "DejaVuSans-Bold"
+
+
+def _register_fonts():
+    if FONT_REGULAR in pdfmetrics.getRegisteredFontNames():
+        return
+    pdfmetrics.registerFont(TTFont(FONT_REGULAR, str(FONT_DIR / "DejaVuSans.ttf")))
+    pdfmetrics.registerFont(TTFont(FONT_BOLD, str(FONT_DIR / "DejaVuSans-Bold.ttf")))
+    pdfmetrics.registerFontFamily(FONT_REGULAR, normal=FONT_REGULAR, bold=FONT_BOLD)
 
 
 def order_receipt_filename(order):
-    return f"homex-order-{order_code(order).lower()}-receipt.docx"
+    return f"homex-order-{order_code(order).lower()}-receipt.pdf"
 
 
 def order_code(order):
     return f"HX{str(order.id).split('-')[0].upper()}"
 
 
-def build_order_receipt_docx(order, request=None):
+def build_order_receipt_pdf(order, request=None):
+    """Render the order receipt as a PDF and return its bytes."""
+    _register_fonts()
     rows = receipt_rows(order, request)
-    document_xml = build_document_xml(rows)
+
+    label_style = ParagraphStyle("label", fontName=FONT_BOLD, fontSize=9, leading=12)
+    value_style = ParagraphStyle("value", fontName=FONT_REGULAR, fontSize=9, leading=12)
+    title_style = ParagraphStyle("title", fontName=FONT_BOLD, fontSize=16, leading=20)
+    subtitle_style = ParagraphStyle("subtitle", fontName=FONT_REGULAR, fontSize=10, leading=14)
+    footer_style = ParagraphStyle("footer", fontName=FONT_REGULAR, fontSize=8, leading=11, textColor=colors.grey)
+
+    table = Table(
+        [
+            [Paragraph(escape(str(label)), label_style), Paragraph(escape(str(value)), value_style)]
+            for label, value in rows
+        ],
+        colWidths=[55 * mm, 105 * mm],
+        # Let long receipts flow onto extra pages instead of overflowing one.
+        repeatRows=0,
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D0D0D0")),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#FAFAFA")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+
+    story = [
+        Paragraph(f"HomeX order check — {escape(order_code(order))}", title_style),
+        Spacer(1, 3 * mm),
+        Paragraph("Buyurtma haqidagi barcha tafsilotlar", subtitle_style),
+        Spacer(1, 5 * mm),
+        table,
+        Spacer(1, 5 * mm),
+        Paragraph(
+            "Ushbu check usta tomonidan tasdiqlangandan keyin client uchun yuklab olishga ochiladi.",
+            footer_style,
+        ),
+    ]
+
     buffer = BytesIO()
-    with ZipFile(buffer, "w", ZIP_DEFLATED) as docx:
-        docx.writestr("[Content_Types].xml", content_types_xml())
-        docx.writestr("_rels/.rels", root_rels_xml())
-        docx.writestr("docProps/core.xml", core_props_xml(order))
-        docx.writestr("word/document.xml", document_xml)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+        title=f"HomeX {order_code(order)} check",
+        author="HomeX",
+    )
+    doc.build(story)
     return buffer.getvalue()
 
 
@@ -107,79 +179,3 @@ def money(value):
     value = value if value is not None else Decimal("0")
     return f"{value:,.2f} so'm"
 
-
-def build_document_xml(rows):
-    body = [
-        paragraph("HomeX order check", bold=True),
-        paragraph("Buyurtma haqidagi barcha tafsilotlar", bold=True),
-        table(rows),
-        paragraph("Ushbu check usta tomonidan tasdiqlangandan keyin client uchun yuklab olishga ochiladi."),
-    ]
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        f"<w:body>{''.join(body)}"
-        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
-        "</w:body></w:document>"
-    )
-
-
-def paragraph(text, bold=False):
-    bold_xml = "<w:b/>" if bold else ""
-    return f"<w:p><w:r><w:rPr>{bold_xml}</w:rPr><w:t>{escape(str(text))}</w:t></w:r></w:p>"
-
-
-def table(rows):
-    cells = []
-    for label, value in rows:
-        cells.append(
-            "<w:tr>"
-            f"<w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{escape(str(label))}</w:t></w:r></w:p></w:tc>"
-            f"<w:tc><w:p><w:r><w:t>{escape(str(value))}</w:t></w:r></w:p></w:tc>"
-            "</w:tr>"
-        )
-    return (
-        "<w:tbl>"
-        '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/>'
-        '<w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/>'
-        '<w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/></w:tblBorders></w:tblPr>'
-        f"{''.join(cells)}</w:tbl>"
-    )
-
-
-def content_types_xml():
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        '<Default Extension="xml" ContentType="application/xml"/>'
-        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
-        "</Types>"
-    )
-
-
-def root_rels_xml():
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
-        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
-        "</Relationships>"
-    )
-
-
-def core_props_xml(order):
-    created = timezone.localtime(order.created_at).isoformat() if order.created_at else timezone.now().isoformat()
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
-        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
-        'xmlns:dcterms="http://purl.org/dc/terms/" '
-        'xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
-        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
-        f"<dc:title>HomeX {escape(order_code(order))} check</dc:title>"
-        "<dc:creator>HomeX</dc:creator>"
-        f'<dcterms:created xsi:type="dcterms:W3CDTF">{escape(created)}</dcterms:created>'
-        "</cp:coreProperties>"
-    )

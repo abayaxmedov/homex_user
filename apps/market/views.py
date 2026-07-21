@@ -1,9 +1,11 @@
 from uuid import UUID
 
 from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
 
 from apps.accounts.permissions import IsClient
@@ -150,7 +152,12 @@ class MarketFavoriteToggleView(generics.GenericAPIView):
     serializer_class = MarketFavoriteSerializer
 
     def post(self, request):
-        product = MarketProduct.objects.get(id=request.data.get("product"))
+        product_id = request.data.get("product")
+        if not is_uuid(product_id):
+            raise ValidationError({"product": "To'g'ri product id yuboring"})
+        product = get_object_or_404(
+            MarketProduct.objects.filter(is_active=True, is_moderated=True), id=product_id
+        )
         favorite, created = MarketFavorite.objects.get_or_create(client=request.user, product=product)
         if not created:
             favorite.delete()

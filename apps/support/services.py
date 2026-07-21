@@ -2,7 +2,7 @@ import logging
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.db.models import OuterRef, Subquery
+from django.db.models import F, OuterRef, Subquery
 from django.utils import timezone
 
 from apps.support.models import SupportChat, SupportMessage
@@ -71,12 +71,15 @@ def attach_latest_support_messages(chats):
 
 
 def touch_chat(chat, increment_unread=False):
-    chat.updated_at = timezone.now()
-    update_fields = ["updated_at"]
+    now = timezone.now()
     if increment_unread:
-        chat.unread_by_admin = chat.unread_by_admin + 1
-        update_fields.append("unread_by_admin")
-    chat.save(update_fields=update_fields)
+        # Atomic increment so two simultaneous participant messages don't lose an
+        # increment (read-modify-write race); refresh so callers read the new value.
+        SupportChat.objects.filter(pk=chat.pk).update(updated_at=now, unread_by_admin=F("unread_by_admin") + 1)
+        chat.refresh_from_db(fields=["updated_at", "unread_by_admin"])
+    else:
+        chat.updated_at = now
+        chat.save(update_fields=["updated_at"])
 
 
 def create_support_message(chat, sender, content, attachment=None):

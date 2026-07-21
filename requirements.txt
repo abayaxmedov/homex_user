@@ -84,6 +84,7 @@ python-dotenv==1.2.2
 PyYAML==6.0.3
 redis==8.0.0
 referencing==0.37.0
+reportlab==4.2.5
 requests==2.34.2
 rpds-py==2026.5.1
 service-identity==26.1.0

@@ -6,7 +6,7 @@ from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from rest_framework import serializers
 
 from apps.accounts.models import Client, Master
-from apps.orders.models import Order, OrderStatus, PaymentType
+from apps.orders.models import Order, OrderStatus, PaymentType, can_admin_set_status
 from apps.orders.receipts import order_receipt_filename
 from apps.profiles.models import ClientAddress, Tariff, TariffFeature
 from apps.services.models import Service, ServiceCategory
@@ -735,6 +735,13 @@ class InternalOrderWriteSerializer(serializers.Serializer):
             attrs["cancel_reason"] = attrs.pop("cancelled_reason")
         if "status" in attrs:
             attrs["status"] = ORDER_STATUS_FROM_DASHBOARD[attrs["status"]]
+            # Completing (or reviving a terminal order) must not happen through this
+            # generic write — it skips the wallet credit + inventory deduction.
+            current = getattr(self.instance, "status", OrderStatus.NEW)
+            if not can_admin_set_status(current, attrs["status"]):
+                raise serializers.ValidationError(
+                    {"status": "Bu holatga o'tkazib bo'lmaydi. Yakunlash usta yakunlash oqimi orqali bo'ladi."}
+                )
         return attrs
 
     def create(self, validated_data):

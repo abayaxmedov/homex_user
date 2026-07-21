@@ -19,6 +19,26 @@ class OrderStatus(models.TextChoices):
 # Statuses in which a master is actively handling the order (lead master set).
 ACTIVE_ORDER_STATUSES = (OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED)
 
+# Terminal statuses — an order here has already run (or forfeited) its side effects.
+TERMINAL_ORDER_STATUSES = (OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REJECTED)
+
+
+def can_admin_set_status(current, new):
+    """Whether an admin/generic write serializer may move an order `current` -> `new`.
+
+    Completing an order must run the master completion flow (OrderCompleteSerializer:
+    it credits the wallet, deducts inventory and approves the receipt). So a generic
+    status write may NOT set ``completed`` and may NOT revive a terminal order — both
+    would leave money/stock inconsistent. A no-op (same status) is always allowed.
+    """
+    if current == new:
+        return True
+    if new == OrderStatus.COMPLETED:
+        return False
+    if current in TERMINAL_ORDER_STATUSES:
+        return False
+    return True
+
 # Maps the fine-grained order status to the coarse dashboard tab/badge bucket
 # used in the Figma design (Yangi / Yo'lda / Bajarilmoqda / Yakunlangan / Bekor).
 STATUS_TAB = {

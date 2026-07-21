@@ -166,6 +166,9 @@ class OrderSerializer(serializers.ModelSerializer):
             "status",
             "service_fee",
             "inventory_total",
+            # bonus_used is server-controlled: there is no client bonus balance to spend,
+            # so a client must not be able to discount their own total. Input is ignored.
+            "bonus_used",
             "total_amount",
             "before_photo",
             "completion_photo",
@@ -420,6 +423,11 @@ class OrderCompleteSerializer(serializers.Serializer):
         if not order.receipt_approved_at:
             order.receipt_approved_at = timezone.now()
             order.receipt_approved_by = order.master
+        # Cash/card is collected in person at completion, so mark it paid here. Online
+        # stays driven by Payme (mark_order_paid), which fires on the real payment.
+        if order.payment_type != PaymentType.ONLINE and not order.is_paid:
+            order.is_paid = True
+            order.paid_at = timezone.now()
         order.recalculate_total()
         order.save()
         wallet, _ = MasterWallet.objects.get_or_create(master=order.master)
@@ -468,17 +476,16 @@ class PaymentStartSerializer(serializers.Serializer):
     bonus_used = serializers.DecimalField(
         max_digits=12,
         decimal_places=2,
-        required=False,
-        default=0,
-        help_text="Client ishlatmoqchi bo'lgan bonus summa.",
+        read_only=True,
+        help_text="Server tomonidan boshqariladi (hozircha bonus tizimi yo'q). Kiritilsa e'tiborsiz qoldiriladi.",
     )
     receipt = serializers.FileField(required=False)
 
     def create(self, validated_data):
         order = self.context["order"]
-        order.bonus_used = validated_data.get("bonus_used", 0)
+        # No client bonus balance exists — never let the payer discount their own total.
         order.recalculate_total()
-        order.save(update_fields=["bonus_used", "total_amount", "updated_at"])
+        order.save(update_fields=["total_amount", "updated_at"])
         return PaymentClient().create_payment(order, validated_data["payment_method"]).payload
 
 

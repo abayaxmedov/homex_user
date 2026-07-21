@@ -47,8 +47,20 @@ from apps.support.services import (
     with_latest_support_message,
 )
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
-from apps.wallet.services import accept_cash_handover, reject_cash_handover
+from apps.wallet.services import (
+    accept_cash_handover,
+    post_wallet_transaction,
+    reject_cash_handover,
+    reverse_wallet_transaction,
+)
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
+from apps.warehouse.services import (
+    adjust_master_inventory,
+    adjust_warehouse_stock,
+    apply_stock_movement_effect,
+    return_inventory_to_warehouse,
+    reverse_stock_movement,
+)
 from .serializers import (
     DashboardCashHandoverActionSerializer,
     DashboardCashHandoverEnvelopeSerializer,
@@ -70,6 +82,7 @@ from .serializers import (
     DashboardMasterMiniSerializer,
     DashboardMasterLocationSerializer,
     DashboardMasterInventorySerializer,
+    DashboardMasterInventoryAssignSerializer,
     DashboardMasterApplicationSerializer,
     DashboardMasterBlockSerializer,
     DashboardMasterSerializer,
@@ -1635,6 +1648,17 @@ class DashboardWarehouseProductListCreateAPIView(DashboardPermissionMixin, Envel
             queryset = [product for product in queryset if product.is_low_stock]
         return queryset
 
+    def perform_create(self, serializer):
+        # Journal the opening stock so the movement ledger stays in sync with on-hand qty.
+        product = serializer.save()
+        if product.quantity:
+            StockMovement.objects.create(
+                product=product,
+                movement_type=StockMovement.IN,
+                quantity=product.quantity,
+                note="Boshlang'ich qoldiq",
+            )
+
 
 @extend_schema(
     tags=[DASHBOARD_WAREHOUSE_TAG],
@@ -1644,6 +1668,17 @@ class DashboardWarehouseProductListCreateAPIView(DashboardPermissionMixin, Envel
 class DashboardWarehouseProductDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardWarehouseProductSerializer
     queryset = WarehouseProduct.objects.all()
+
+    def perform_update(self, serializer):
+        # A direct `quantity` edit is routed through the locked stock service so it
+        # records a StockMovement and can't silently diverge the ledger or go negative.
+        product = serializer.instance
+        new_quantity = serializer.validated_data.pop("quantity", None)
+        if serializer.validated_data:
+            serializer.save()
+        if new_quantity is not None and new_quantity != product.quantity:
+            adjust_warehouse_stock(product, new_quantity - product.quantity, note="Admin qoldiqni to'g'riladi")
+        serializer.instance.refresh_from_db()
 
 
 @extend_schema(
@@ -1664,6 +1699,17 @@ class DashboardStockMovementListCreateAPIView(DashboardPermissionMixin, Envelope
             queryset = queryset.filter(movement_type=movement_type)
         return queryset.order_by("-created_at")
 
+    @transaction.atomic
+    def perform_create(self, serializer):
+        # A manual movement must actually move on-hand stock (IN adds, OUT removes),
+        # otherwise the ledger and WarehouseProduct.quantity drift apart.
+        data = serializer.validated_data
+        apply_stock_movement_effect(data["product"], data["movement_type"], data["quantity"])
+        serializer.save()
+
+
+LEDGER_IMMUTABLE_MSG = "Ledger yozuvining moliyaviy maydonini o'zgartirib bo'lmaydi"
+
 
 @extend_schema(
     tags=[DASHBOARD_WAREHOUSE_TAG],
@@ -1673,6 +1719,20 @@ class DashboardStockMovementListCreateAPIView(DashboardPermissionMixin, Envelope
 class DashboardStockMovementDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardStockMovementSerializer
     queryset = StockMovement.objects.select_related("product", "master").all()
+
+    def perform_update(self, serializer):
+        # Financial fields of a posted movement are immutable (editing them would
+        # desync stock); only `note` may be corrected.
+        instance = serializer.instance
+        for field in ("product", "movement_type", "quantity", "master"):
+            if field in serializer.validated_data and serializer.validated_data[field] != getattr(instance, field):
+                raise ValidationError({field: LEDGER_IMMUTABLE_MSG})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        # Deleting a movement reverses its effect on on-hand stock.
+        reverse_stock_movement(instance)
+        instance.delete()
 
 
 @extend_schema(
@@ -1696,6 +1756,23 @@ class DashboardMasterInventoryListCreateAPIView(DashboardPermissionMixin, Envelo
             queryset = [item for item in queryset if item.is_low_stock]
         return queryset
 
+    @extend_schema(
+        summary="Ustaga mahsulot biriktirish",
+        description=(
+            "Ustaga mahsulot biriktiradi: markaziy ombordan miqdorni ayiradi, StockMovement (chiqim) "
+            "yozadi va usta allaqachon shu mahsulotga ega bo'lsa miqdorni ustiga qo'shadi. Ombor yetarli "
+            "bo'lmasa 400 qaytaradi."
+        ),
+        request=DashboardMasterInventoryAssignSerializer,
+        responses={201: DashboardMasterInventorySerializer},
+    )
+    def create(self, request, *args, **kwargs):
+        serializer = DashboardMasterInventoryAssignSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = serializer.save()
+        data = DashboardMasterInventorySerializer(item, context=self.get_serializer_context()).data
+        return success_response(data, status=201)
+
 
 @extend_schema(
     tags=[DASHBOARD_WAREHOUSE_TAG],
@@ -1705,6 +1782,24 @@ class DashboardMasterInventoryListCreateAPIView(DashboardPermissionMixin, Envelo
 class DashboardMasterInventoryDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardMasterInventorySerializer
     queryset = MasterInventory.objects.select_related("master", "warehouse_product").all()
+
+    def perform_update(self, serializer):
+        # A quantity edit is routed through the locked service (moves the warehouse
+        # delta + records a StockMovement); the identity fields can't be reassigned.
+        item = serializer.instance
+        for field in ("master", "warehouse_product"):
+            if field in serializer.validated_data and serializer.validated_data[field] != getattr(item, field):
+                raise ValidationError({field: "Bu maydonni o'zgartirib bo'lmaydi"})
+        new_quantity = serializer.validated_data.pop("quantity", None)
+        if serializer.validated_data:
+            serializer.save()
+        if new_quantity is not None and new_quantity != item.quantity:
+            adjust_master_inventory(item, new_quantity)
+        serializer.instance.refresh_from_db()
+
+    def perform_destroy(self, instance):
+        # Returns the remaining stock to the central warehouse (+ StockMovement IN).
+        return_inventory_to_warehouse(instance)
 
 
 @extend_schema(
@@ -1900,6 +1995,19 @@ class DashboardWalletTransactionListCreateAPIView(DashboardPermissionMixin, Enve
             queryset = queryset.filter(transaction_type=transaction_type)
         return queryset.order_by("-created_at")
 
+    def perform_create(self, serializer):
+        # A manual transaction must actually move the wallet balance, otherwise the
+        # ledger and MasterWallet balances diverge.
+        data = serializer.validated_data
+        serializer.instance = post_wallet_transaction(
+            master=data["master"],
+            transaction_type=data["transaction_type"],
+            amount=data["amount"],
+            payment_method=data["payment_method"],
+            description=data.get("description", ""),
+            order=data.get("order"),
+        )
+
 
 @extend_schema(
     tags=[DASHBOARD_FINANCE_TAG],
@@ -1909,6 +2017,20 @@ class DashboardWalletTransactionListCreateAPIView(DashboardPermissionMixin, Enve
 class DashboardWalletTransactionDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardWalletTransactionSerializer
     queryset = WalletTransaction.objects.select_related("master", "order").all()
+
+    def perform_update(self, serializer):
+        # Financial fields of a posted transaction are immutable (editing them would
+        # desync the balance); only `description` may be corrected.
+        instance = serializer.instance
+        for field in ("master", "transaction_type", "amount", "payment_method", "order"):
+            if field in serializer.validated_data and serializer.validated_data[field] != getattr(instance, field):
+                raise ValidationError({field: LEDGER_IMMUTABLE_MSG})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        # Deleting a transaction reverses its balance effect (guards negative balance).
+        reverse_wallet_transaction(instance)
+        instance.delete()
 
 
 @extend_schema(
@@ -1969,7 +2091,19 @@ class DashboardWithdrawRequestDetailAPIView(DashboardPermissionMixin, EnvelopeMi
             reject_cash_handover(instance, note=note)
             serializer.instance.refresh_from_db()
         else:
+            # A processed (approved/rejected) request's amount is settled — editing it
+            # would desync the already-moved balance, so only allow it while pending.
+            if instance.status != WithdrawRequest.PENDING and "amount" in serializer.validated_data:
+                if serializer.validated_data["amount"] != instance.amount:
+                    raise ValidationError({"amount": "Yakunlangan so'rov summasini o'zgartirib bo'lmaydi"})
             serializer.save()
+
+    def perform_destroy(self, instance):
+        # An approved request already debited the balance + wrote an OUT transaction;
+        # deleting it would strand that money. Only a pending request may be deleted.
+        if instance.status != WithdrawRequest.PENDING:
+            raise ValidationError({"status": "Faqat 'pending' so'rovni o'chirish mumkin"})
+        instance.delete()
 
 
 @extend_schema(

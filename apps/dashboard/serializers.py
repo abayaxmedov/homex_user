@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.db import transaction
 from django.db.models import Sum
 from django.urls import reverse
 from django.utils import timezone
@@ -24,8 +25,9 @@ from apps.dashboard.models import (
 )
 from apps.dashboard.realtime import broadcast_dashboard_order
 from apps.market.models import MarketCategory, MarketOrder, MarketProduct, MarketProductImage
+from apps.market.services import place_market_order
 from apps.notifications.models import Notification
-from apps.orders.models import STATUS_TAB, Order, OrderMaster, OrderStatus, OrderTracking
+from apps.orders.models import STATUS_TAB, Order, OrderMaster, OrderStatus, OrderTracking, can_admin_set_status
 from apps.orders.tracking import ensure_tracking, tracking_state
 from apps.notifications.services import create_notification
 from apps.profiles.models import Tariff, TariffFeature
@@ -33,6 +35,7 @@ from apps.services.models import Service, ServiceCategory, ServicePrice
 from apps.support.models import SupportMessage
 from apps.wallet.models import MasterExpense, MasterWallet, WalletTransaction, WithdrawRequest
 from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
+from apps.warehouse.services import assign_inventory_to_master
 
 
 DASHBOARD_ROLE = "admin"
@@ -300,6 +303,11 @@ class DashboardClientSerializer(serializers.ModelSerializer):
     )
     addresses_count = serializers.SerializerMethodField(help_text="Clientga tegishli manzillar soni.")
     last_order_date = serializers.SerializerMethodField(help_text="Clientning oxirgi order created_at sanasi.")
+    # Computed live: the stored Client.total_spent/total_orders are never maintained,
+    # so read them from the orders instead of returning stale zeros. Same field names
+    # and formats as before, so the response contract is unchanged.
+    total_spent = serializers.SerializerMethodField(help_text="Yakunlangan buyurtmalar umumiy summasi.")
+    total_orders = serializers.SerializerMethodField(help_text="Clientning umumiy buyurtmalari soni.")
 
     class Meta:
         model = Client
@@ -352,6 +360,15 @@ class DashboardClientSerializer(serializers.ModelSerializer):
     def get_last_order_date(self, obj):
         order = obj.orders.order_by("-created_at").first()
         return order.created_at if order else None
+
+    @extend_schema_field(serializers.DecimalField(max_digits=14, decimal_places=2))
+    def get_total_spent(self, obj):
+        total = obj.orders.filter(status=OrderStatus.COMPLETED).aggregate(total=Sum("total_amount"))["total"]
+        return f"{Decimal(total or 0):.2f}"
+
+    @extend_schema_field(serializers.IntegerField)
+    def get_total_orders(self, obj):
+        return obj.orders.count()
 
 
 class DashboardCashHandoverSerializer(serializers.ModelSerializer):
@@ -793,6 +810,16 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
     def get_time(self, obj):
         return timezone.localtime(obj.created_at).strftime("%H:%M")
 
+    def validate_status(self, value):
+        # Block completing (or reviving a terminal order) via the generic order write —
+        # completion must run the master flow that credits the wallet + deducts inventory.
+        current = getattr(self.instance, "status", OrderStatus.NEW)
+        if not can_admin_set_status(current, value):
+            raise serializers.ValidationError(
+                "Bu holat o'zgarishiga ruxsat yo'q. Yakunlash usta yakunlash oqimi orqali bo'ladi."
+            )
+        return value
+
     def validate(self, attrs):
         client = attrs.get("client") or getattr(self.instance, "client", None)
         address = attrs.get("address") or getattr(self.instance, "address", None)
@@ -832,9 +859,17 @@ class DashboardOrderStatusSerializer(serializers.Serializer):
     cancel_reason = serializers.CharField(max_length=255, required=False, allow_blank=True)
     rejected_reason = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
+    @transaction.atomic
     def save(self, **kwargs):
-        order = kwargs["order"]
-        order.status = self.validated_data["status"]
+        # Lock the row and guard the transition: completing must go through the master
+        # completion flow (wallet credit + inventory), and a terminal order can't be revived.
+        order = Order.objects.select_for_update().get(pk=kwargs["order"].pk)
+        new_status = self.validated_data["status"]
+        if not can_admin_set_status(order.status, new_status):
+            raise serializers.ValidationError(
+                {"status": "Bu holat o'zgarishiga ruxsat yo'q. Yakunlash usta yakunlash oqimi orqali bo'ladi."}
+            )
+        order.status = new_status
         if order.status == OrderStatus.CANCELLED:
             order.cancel_reason = self.validated_data.get("cancel_reason", order.cancel_reason)
         if order.status == OrderStatus.REJECTED:
@@ -1442,6 +1477,10 @@ class DashboardMarketOrderSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("id", "client_detail", "product_detail", "total_amount", "created_at", "updated_at")
 
+    def create(self, validated_data):
+        # Reserve stock (locked, validated) — same path as the client order flow.
+        return place_market_order(**validated_data)
+
 
 class DashboardWarehouseCategorySerializer(serializers.ModelSerializer):
     products_count = serializers.SerializerMethodField()
@@ -1535,6 +1574,24 @@ class DashboardMasterInventorySerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "master_detail", "product_detail", "is_low_stock", "assigned_at", "created_at", "updated_at")
 
 
+class DashboardMasterInventoryAssignSerializer(serializers.Serializer):
+    """Ustaga mahsulot biriktirish (write). Ombordan ayiradi, StockMovement yozadi,
+    mavjud biriktirishni to'ldiradi — :func:`assign_inventory_to_master` orqali."""
+
+    master = serializers.PrimaryKeyRelatedField(queryset=Master.objects.all())
+    warehouse_product = serializers.PrimaryKeyRelatedField(
+        queryset=WarehouseProduct.objects.filter(is_active=True)
+    )
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+
+    def save(self, **kwargs):
+        return assign_inventory_to_master(
+            master=self.validated_data["master"],
+            product=self.validated_data["warehouse_product"],
+            quantity=self.validated_data["quantity"],
+        )
+
+
 class DashboardSupportMessageSerializer(serializers.ModelSerializer):
     client_detail = DashboardClientMiniSerializer(source="client", read_only=True)
     master_detail = DashboardMasterMiniSerializer(source="master", read_only=True)
@@ -1575,7 +1632,18 @@ class DashboardMasterWalletSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "master_detail", "created_at", "updated_at")
+        # Balances are only ever moved through the wallet services (order completion,
+        # cash handover, manual transaction) — never edited directly on the wallet.
+        read_only_fields = (
+            "id",
+            "master_detail",
+            "balance_online",
+            "balance_cash",
+            "total_earned",
+            "total_withdrawn",
+            "created_at",
+            "updated_at",
+        )
 
 
 class DashboardWalletTransactionSerializer(serializers.ModelSerializer):
