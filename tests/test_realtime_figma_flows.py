@@ -2,8 +2,6 @@ import asyncio
 import json
 import logging
 from datetime import date, time
-from io import BytesIO
-from zipfile import ZipFile
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -18,6 +16,7 @@ from apps.notifications.services import create_notification, notification_group
 
 from apps.orders.consumers import ClientTrackingConsumer
 from apps.orders.models import HomeBanner, Order, OrderStatus, OrderTracking
+from apps.orders.receipts import receipt_rows
 from apps.orders.tracking import tracking_group
 from apps.support.consumers import serialize_history, ws_json_dumps
 from apps.support.models import SupportChat, SupportMessage
@@ -338,18 +337,20 @@ def test_client_receipt_download_requires_master_confirmation(client_api, master
     assert order.receipt_approved_at is not None
     assert order.receipt_approved_by == master
     assert download_response.status_code == 200
-    assert download_response["Content-Type"].startswith(
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
+    assert download_response["Content-Type"] == "application/pdf"
     assert "attachment;" in download_response["Content-Disposition"]
+    assert ".pdf" in download_response["Content-Disposition"]
+    # Real PDF: starts with the %PDF- magic and carries an EOF marker.
+    content = download_response.content
+    assert content.startswith(b"%PDF-")
+    assert b"%%EOF" in content
 
-    with ZipFile(BytesIO(download_response.content)) as docx:
-        document_xml = docx.read("word/document.xml").decode("utf-8")
-
-    assert "HomeX order check" in document_xml
-    assert "Chilonzor, Tashkent" in document_xml
-    assert service.name in document_xml
-    assert master.phone in document_xml
+    # PDF streams are compressed, so assert the receipt content via the row data
+    # the PDF is rendered from.
+    rendered = " ".join(f"{label} {value}" for label, value in receipt_rows(order))
+    assert "Chilonzor, Tashkent" in rendered
+    assert service.name in rendered
+    assert master.phone in rendered
 
 
 def test_tracking_location_update_and_client_track_payload(master_api, client_api, master, client_user, service):

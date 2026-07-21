@@ -10,7 +10,8 @@ from apps.common.filters import filter_by_category
 from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.orders.models import Order, OrderInventoryUsage
-from apps.warehouse.models import MasterInventory, StockMovement, WarehouseCategory, WarehouseProduct
+from apps.warehouse.models import MasterInventory, WarehouseCategory, WarehouseProduct
+from apps.warehouse.services import return_inventory_to_warehouse
 from apps.warehouse.serializers import (
     AdminAssignInventorySerializer,
     AdminUpdateInventorySerializer,
@@ -122,20 +123,9 @@ class AdminUpdateInventoryView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         return success_response(MasterInventorySerializer(serializer.save()).data)
 
-    @transaction.atomic
     def delete(self, request, master_id, item_id):
-        item = get_object_or_404(MasterInventory.objects.select_for_update(), id=item_id, master_id=master_id)
-        product = item.warehouse_product
-        product.quantity += item.quantity
-        product.save(update_fields=["quantity", "updated_at"])
-        StockMovement.objects.create(
-            product=product,
-            movement_type=StockMovement.IN,
-            quantity=item.quantity,
-            master=item.master,
-            note=f"Ustadan qaytarildi: {item.master}",
-        )
-        item.delete()
+        item = get_object_or_404(MasterInventory, id=item_id, master_id=master_id)
+        return_inventory_to_warehouse(item)
         return success_response(message="Inventory returned", status=204)
 
 

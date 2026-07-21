@@ -85,7 +85,7 @@ Error response:
 
 - Master `POST /api/v1/master/orders/{id}/complete/` orqali orderni yakunlaydi va checkni tasdiqlaydi.
 - Agar order allaqachon `completed` bo'lsa, master `POST /api/v1/master/orders/{id}/receipt/confirm/` orqali checkni alohida tasdiqlashi mumkin.
-- Client faqat `receipt_status=approved` bo'lganda `GET /api/v1/client/orders/{id}/receipt/download/` orqali Word `.docx` checkni yuklab oladi.
+- Client faqat `receipt_status=approved` bo'lganda `GET /api/v1/client/orders/{id}/receipt/download/` orqali `.pdf` checkni yuklab oladi.
 
 ## Payment type qiymatlari
 

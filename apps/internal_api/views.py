@@ -17,7 +17,7 @@ from apps.accounts.models import Client, Master
 from apps.common.filters import filter_by_category
 from apps.common.responses import success_response
 from apps.orders.models import Order, OrderStatus
-from apps.orders.receipts import DOCX_CONTENT_TYPE, build_order_receipt_docx, order_receipt_filename
+from apps.orders.receipts import PDF_CONTENT_TYPE, build_order_receipt_pdf, order_receipt_filename
 from apps.profiles.models import Tariff
 from apps.services.models import Service, ServiceCategory
 from apps.wallet.models import MasterExpense
@@ -937,7 +937,7 @@ class OrderReceiptDownloadAPIView(InternalAPIViewMixin, APIView):
         if order.status != OrderStatus.COMPLETED or not order.receipt_approved_at:
             raise PermissionDenied("Check hali usta tomonidan tasdiqlanmagan")
 
-        response = HttpResponse(build_order_receipt_docx(order, request=request), content_type=DOCX_CONTENT_TYPE)
+        response = HttpResponse(build_order_receipt_pdf(order, request=request), content_type=PDF_CONTENT_TYPE)
         response["Content-Disposition"] = f'attachment; filename="{order_receipt_filename(order)}"'
         return response
 
