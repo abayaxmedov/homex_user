@@ -331,9 +331,9 @@ class MasterOrderOnWayView(generics.GenericAPIView):
     summary="Usta yetib keldi",
     description=(
         "Lead usta manzilga yetib borgach order statusini `arrived` qiladi va client tracking socketiga yuboradi. "
-        "Status `on_way` -> `arrived`. Multipart request bilan `before_photo` **majburiy** yuboriladi."
+        "Status `on_way` -> `arrived`. Body kerak emas (before_photo endi client order yaratishda yuklaydi)."
     ),
-    request={"multipart/form-data": OrderStartSerializer},
+    request=None,
     responses=OrderSerializer,
 )
 class MasterOrderStartView(generics.GenericAPIView):

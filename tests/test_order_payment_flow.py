@@ -122,14 +122,48 @@ def test_awaiting_payment_stays_in_master_in_progress_tab(master_api, client_use
     assert str(order.id) in [o["id"] for o in completed2.data["results"]]
 
 
-def test_arrived_requires_before_photo(master_api, client_user, service, master):
+def test_arrived_is_pure_status_transition_no_photo(master_api, client_user, service, master):
     order = _order(client_user, service, master=master, status=OrderStatus.ON_WAY)
 
-    # "Arrived" without the before photo is rejected — the completed order must have one.
+    # "Arrived" needs no body — before_photo is provided by the client at order creation.
     resp = master_api.post(reverse("master-order-arrived", args=[order.id]))
-    assert resp.status_code == 400
+    assert resp.status_code == 200
     order.refresh_from_db()
-    assert order.status == OrderStatus.ON_WAY  # unchanged
+    assert order.status == OrderStatus.ARRIVED
+
+
+def test_client_uploads_before_photo_at_order_creation(client_api, master_api, client_user, service, master):
+    from io import BytesIO
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(buf, format="PNG")
+    photo = SimpleUploadedFile("before.png", buf.getvalue(), content_type="image/png")
+
+    create = client_api.post(
+        reverse("client-orders"),
+        {
+            "service": str(service.id),
+            "address_text": "Chilonzor",
+            "lat": "41.30000000",
+            "lng": "69.25000000",
+            "scheduled_date": date.today().isoformat(),
+            "scheduled_time": "10:00:00",
+            "before_photo": photo,
+        },
+        format="multipart",
+    )
+    assert create.status_code == 201
+    order = Order.objects.get(id=create.data["data"]["id"])
+    assert order.before_photo  # stored on the order
+    # Client sees it in the create response, and the master sees it on the order detail.
+    assert create.data["data"]["before_photo"]
+    order.master = master
+    order.save(update_fields=["master"])
+    master_detail = master_api.get(reverse("master-order-detail", args=[order.id]))
+    assert master_detail.data["data"]["before_photo"]
 
 
 def test_client_can_delete_own_device(client_api, client_user):

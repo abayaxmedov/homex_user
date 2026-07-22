@@ -77,8 +77,9 @@ def test_order_complete_updates_wallet_and_inventory(master, client_user, servic
         amount=130000,
         payment_method=WalletTransaction.ONLINE,
     ).exists()
-    rows = receipt_rows(order)
-    assert any("Filter; miqdor: 2" in str(value) and "15,000.00" in str(value) for _, value in rows)
+    rows = dict(receipt_rows(order))
+    assert rows["Ishlatilgan uskunalar jami"] == "30,000.00 so'm"
+    assert rows["Jami summa"] == "130,000.00 so'm"
 
 
 def test_order_complete_accepts_multipart_used_items_json_string(master, client_user, service):

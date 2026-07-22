@@ -2,20 +2,11 @@ import asyncio
 import json
 import logging
 from datetime import date, time
-from io import BytesIO
 
 import pytest
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
-from PIL import Image
-
-
-def _png(name="before.png"):
-    buf = BytesIO()
-    Image.new("RGB", (2, 2), "blue").save(buf, format="PNG")
-    return SimpleUploadedFile(name, buf.getvalue(), content_type="image/png")
 
 from apps.accounts.models import Master
 from apps.accounts.tokens import issue_role_tokens
@@ -130,9 +121,7 @@ def test_client_order_create_opens_tracking_and_status_flow(client_api, master_a
     accepted_track = client_api.get(reverse("client-order-track", args=[order.id]))
     on_way_response = master_api.post(reverse("master-order-on-way", args=[order.id]))
     on_way_track = client_api.get(reverse("client-order-track", args=[order.id]))
-    arrived_response = master_api.post(
-        reverse("master-order-arrived", args=[order.id]), {"before_photo": _png()}, format="multipart"
-    )
+    arrived_response = master_api.post(reverse("master-order-arrived", args=[order.id]))
     arrived_track = client_api.get(reverse("client-order-track", args=[order.id]))
     complete_response = master_api.post(
         reverse("master-order-complete", args=[order.id]),
@@ -190,9 +179,7 @@ def test_notification_socket_receives_full_status_flow(master_api, master, clien
     accepted = async_to_sync(channel_layer.receive)(channel_name)
     master_api.post(reverse("master-order-on-way", args=[order.id]))
     on_way = async_to_sync(channel_layer.receive)(channel_name)
-    master_api.post(
-        reverse("master-order-arrived", args=[order.id]), {"before_photo": _png()}, format="multipart"
-    )
+    master_api.post(reverse("master-order-arrived", args=[order.id]))
     arrived = async_to_sync(channel_layer.receive)(channel_name)
     master_api.post(
         reverse("master-order-complete", args=[order.id]),
@@ -359,11 +346,10 @@ def test_client_receipt_download_requires_master_confirmation(client_api, master
     assert b"%%EOF" in content
 
     # PDF streams are compressed, so assert the receipt content via the row data
-    # the PDF is rendered from.
+    # the PDF is rendered from (trimmed to the required fields).
     rendered = " ".join(f"{label} {value}" for label, value in receipt_rows(order))
-    assert "Chilonzor, Tashkent" in rendered
-    assert service.name in rendered
-    assert master.phone in rendered
+    assert service.name in rendered  # Xizmat
+    assert master.phone in rendered  # Usta telefon
 
 
 def test_tracking_location_update_and_client_track_payload(master_api, client_api, master, client_user, service):

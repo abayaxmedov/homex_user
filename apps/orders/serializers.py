@@ -106,6 +106,8 @@ class OrderSerializer(serializers.ModelSerializer):
     device_model = serializers.CharField(write_only=True, required=False, allow_blank=True)
     device_image = serializers.ImageField(write_only=True, required=False, allow_null=True)
     device_location_label = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # Client uploads the order's "before" photo at creation; readable by client + master.
+    before_photo = UploadImageField(required=False)
 
     class Meta:
         model = Order
@@ -169,7 +171,6 @@ class OrderSerializer(serializers.ModelSerializer):
             # so a client must not be able to discount their own total. Input is ignored.
             "bonus_used",
             "total_amount",
-            "before_photo",
             "completion_photo",
             "receipt_approved_at",
             "created_at",
@@ -308,30 +309,21 @@ class OrderRejectSerializer(serializers.Serializer):
 
 
 class OrderStartSerializer(serializers.Serializer):
-    # Required: the master must upload the "before" photo when marking arrival, so the
-    # completed order always has an "Oldin" image alongside the completion photo.
-    before_photo = UploadImageField(required=True)
+    """Master marks arrival — a pure status transition (on_way -> arrived).
+
+    The order's "before" photo is uploaded by the client at order creation
+    (see OrderSerializer.before_photo), not here.
+    """
 
     @transaction.atomic
     def save(self, **kwargs):
         order = self.context["order"]
-        before_photo = self.validated_data.get("before_photo")
-
         if order.status == OrderStatus.ARRIVED:
-            if before_photo:
-                order.before_photo = before_photo
-                order.save(update_fields=["before_photo", "updated_at"])
             return order
-
         if order.status != OrderStatus.ON_WAY:
             raise serializers.ValidationError({"status": "Order faqat 'on_way' holatidan 'arrived' holatiga o'tadi"})
-
-        update_fields = ["status", "updated_at"]
         order.status = OrderStatus.ARRIVED
-        if before_photo:
-            order.before_photo = before_photo
-            update_fields.append("before_photo")
-        order.save(update_fields=update_fields)
+        order.save(update_fields=["status", "updated_at"])
         return order
 
 
