@@ -48,23 +48,32 @@ def assign_inventory_to_master(*, master, product, quantity):
 
 @transaction.atomic
 def return_inventory_to_warehouse(item):
-    """Return a master's whole inventory row to the central warehouse, then delete it.
+    """Return a master's inventory row to the central warehouse and remove it from the master.
 
-    Credits ``WarehouseProduct.quantity`` back and records a ``StockMovement`` IN,
-    so deleting a master's assignment doesn't silently destroy stock. Locked + atomic.
+    Credits ``WarehouseProduct.quantity`` back + records a ``StockMovement`` IN. If the item
+    was used in past orders (``OrderInventoryUsage`` has ``on_delete=PROTECT``), a hard delete
+    would raise ``ProtectedError`` — so it's **soft-removed**: the row is zeroed out (hidden by
+    the ``quantity > 0`` master-list filter) and the order history stays intact. An unused item
+    is deleted outright. Locked + atomic.
     """
     product = WarehouseProduct.objects.select_for_update().get(pk=item.warehouse_product_id)
     returned = item.quantity
-    product.quantity += returned
-    product.save(update_fields=["quantity", "updated_at"])
-    StockMovement.objects.create(
-        product=product,
-        movement_type=StockMovement.IN,
-        quantity=returned,
-        master=item.master,
-        note=f"Ustadan qaytarildi: {item.master}",
-    )
-    item.delete()
+    if returned:
+        product.quantity += returned
+        product.save(update_fields=["quantity", "updated_at"])
+        StockMovement.objects.create(
+            product=product,
+            movement_type=StockMovement.IN,
+            quantity=returned,
+            master=item.master,
+            note=f"Ustadan qaytarildi: {item.master}",
+        )
+    if item.order_usages.exists():
+        # Referenced by order history (PROTECT) — zero it out instead of hard-deleting.
+        item.quantity = 0
+        item.save(update_fields=["quantity", "updated_at"])
+    else:
+        item.delete()
     return returned
 
 

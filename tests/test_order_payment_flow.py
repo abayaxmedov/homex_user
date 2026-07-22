@@ -98,6 +98,40 @@ def test_dashboard_master_edit_daraja_and_address(admin_api, master):
     assert master.address == "Yunusobod 12-uy"
 
 
+def test_awaiting_payment_stays_in_master_in_progress_tab(master_api, client_user, service, master):
+    from apps.orders.models import OrderMaster
+
+    order = _order(
+        client_user, service, master=master, status=OrderStatus.AWAITING_PAYMENT,
+        service_fee=Decimal("100000"), total_amount=Decimal("100000"),
+    )
+    OrderMaster.objects.create(order=order, master=master, is_active=True)
+
+    # "Jarayonda" (in_process) tab includes awaiting_payment — order not closed for master.
+    in_process = master_api.get(reverse("master-orders"), {"tab": "in_process"})
+    assert str(order.id) in [o["id"] for o in in_process.data["results"]]
+
+    # "Tarix" (completed) tab does NOT (client hasn't paid yet).
+    completed = master_api.get(reverse("master-orders"), {"tab": "completed"})
+    assert str(order.id) not in [o["id"] for o in completed.data["results"]]
+
+    # After payment -> completed -> moves to the history tab.
+    order.status = OrderStatus.COMPLETED
+    order.save(update_fields=["status"])
+    completed2 = master_api.get(reverse("master-orders"), {"tab": "completed"})
+    assert str(order.id) in [o["id"] for o in completed2.data["results"]]
+
+
+def test_arrived_requires_before_photo(master_api, client_user, service, master):
+    order = _order(client_user, service, master=master, status=OrderStatus.ON_WAY)
+
+    # "Arrived" without the before photo is rejected — the completed order must have one.
+    resp = master_api.post(reverse("master-order-arrived", args=[order.id]))
+    assert resp.status_code == 400
+    order.refresh_from_db()
+    assert order.status == OrderStatus.ON_WAY  # unchanged
+
+
 def test_client_can_delete_own_device(client_api, client_user):
     address = ClientAddress.objects.create(
         client=client_user, label="Uy", address_text="Chilonzor", lat="41.30000000", lng="69.25000000"
