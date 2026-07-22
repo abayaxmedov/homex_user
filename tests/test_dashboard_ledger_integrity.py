@@ -27,6 +27,32 @@ def test_master_inventory_delete_returns_stock(admin_api, master):
     assert StockMovement.objects.filter(product=product, movement_type=StockMovement.IN, quantity=4).exists()
 
 
+def test_master_inventory_delete_used_item_returns_stock_not_500(admin_api, master, client_user, service):
+    # An item used in a past order is PROTECT-referenced by OrderInventoryUsage — deleting it
+    # must return the stock and soft-remove (zero) it, NOT raise a 500 (ProtectedError).
+    from datetime import date, time
+
+    from apps.orders.models import Order, OrderInventoryUsage, OrderStatus
+
+    product = _product(10)
+    item = assign_inventory_to_master(master=master, product=product, quantity=4)  # warehouse -> 6
+    order = Order.objects.create(
+        client=client_user, master=master, service=service,
+        address_text="X", lat="41.30000000", lng="69.25000000",
+        scheduled_date=date.today(), scheduled_time=time(10, 0), status=OrderStatus.COMPLETED,
+    )
+    OrderInventoryUsage.objects.create(order=order, inventory=item, quantity=3, unit_price=15000)
+
+    resp = admin_api.delete(reverse("dashboard-master-inventory-detail", args=[item.id]))
+    assert resp.status_code in (200, 204)  # not 500
+
+    item.refresh_from_db()  # still exists (history preserved) but zeroed -> hidden from master
+    assert item.quantity == 0
+    product.refresh_from_db()
+    assert product.quantity == 10  # 4 returned to the central warehouse (6 -> 10)
+    assert StockMovement.objects.filter(product=product, movement_type=StockMovement.IN, quantity=4).exists()
+
+
 # --- C2: master-inventory PATCH quantity moves warehouse ---
 
 def test_master_inventory_patch_quantity_moves_warehouse(admin_api, master):

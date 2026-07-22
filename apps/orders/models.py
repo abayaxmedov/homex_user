@@ -21,6 +21,11 @@ class OrderStatus(models.TextChoices):
 # Statuses in which a master is actively handling the order (lead master set).
 ACTIVE_ORDER_STATUSES = (OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED)
 
+# Statuses an order is still "open" (in-progress) FROM THE MASTER'S SIDE — the master
+# keeps seeing it until the client pays the check. awaiting_payment stays here (not in
+# the completed/history tab) so the order doesn't disappear before payment.
+MASTER_IN_PROGRESS_STATUSES = ACTIVE_ORDER_STATUSES + (OrderStatus.AWAITING_PAYMENT,)
+
 # Terminal statuses — an order here has already run (or forfeited) its side effects.
 TERMINAL_ORDER_STATUSES = (OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REJECTED)
 

@@ -30,7 +30,8 @@ class MasterInventoryListView(EnvelopeMixin, generics.ListAPIView):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return MasterInventory.objects.none()
-        queryset = MasterInventory.objects.filter(master=self.request.user).select_related(
+        # Hide depleted tools: an item that dropped to 0 no longer shows in the master's list.
+        queryset = MasterInventory.objects.filter(master=self.request.user, quantity__gt=0).select_related(
             "warehouse_product", "warehouse_product__category"
         )
         search = self.request.query_params.get("search")

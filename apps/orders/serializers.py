@@ -308,7 +308,9 @@ class OrderRejectSerializer(serializers.Serializer):
 
 
 class OrderStartSerializer(serializers.Serializer):
-    before_photo = UploadImageField(required=False)
+    # Required: the master must upload the "before" photo when marking arrival, so the
+    # completed order always has an "Oldin" image alongside the completion photo.
+    before_photo = UploadImageField(required=True)
 
     @transaction.atomic
     def save(self, **kwargs):

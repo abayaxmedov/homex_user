@@ -20,7 +20,15 @@ from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
-from apps.orders.models import ACTIVE_ORDER_STATUSES, HomeBanner, Order, OrderMaster, OrderStatus, PaymentType, Review
+from apps.orders.models import (
+    MASTER_IN_PROGRESS_STATUSES,
+    HomeBanner,
+    Order,
+    OrderMaster,
+    OrderStatus,
+    PaymentType,
+    Review,
+)
 from apps.orders.receipts import PDF_CONTENT_TYPE, build_order_receipt_pdf, order_receipt_filename
 from apps.orders.services import complete_paid_order
 from apps.orders.serializers import (
@@ -165,7 +173,7 @@ class MasterHomeStatsView(generics.GenericAPIView):
                 assigned_masters__master=request.user, status=OrderStatus.NEW
             ).distinct().count(),
             "in_process_orders_count": Order.objects.filter(
-                assigned_masters__master=request.user, status__in=ACTIVE_ORDER_STATUSES
+                assigned_masters__master=request.user, status__in=MASTER_IN_PROGRESS_STATUSES
             ).distinct().count(),
             "average_rating": Review.objects.filter(master=request.user).aggregate(avg=Avg("rating"))["avg"] or 0,
             "wallet": {
@@ -239,7 +247,8 @@ class MasterOrderListView(EnvelopeMixin, generics.ListAPIView):
             # Assigned but not yet accepted by anyone.
             queryset = queryset.filter(status=OrderStatus.NEW)
         elif tab in {"joriy", "in_process"}:
-            queryset = queryset.filter(status__in=ACTIVE_ORDER_STATUSES)
+            # awaiting_payment stays "in progress" for the master until the client pays.
+            queryset = queryset.filter(status__in=MASTER_IN_PROGRESS_STATUSES)
         elif tab in {"completed", "bajarilgan"}:
             queryset = queryset.filter(status=OrderStatus.COMPLETED)
         queryset = filter_by_category(queryset, self.request, field="service__category")
@@ -322,7 +331,7 @@ class MasterOrderOnWayView(generics.GenericAPIView):
     summary="Usta yetib keldi",
     description=(
         "Lead usta manzilga yetib borgach order statusini `arrived` qiladi va client tracking socketiga yuboradi. "
-        "Status `on_way` -> `arrived`. Multipart request bilan `before_photo` optional yuboriladi."
+        "Status `on_way` -> `arrived`. Multipart request bilan `before_photo` **majburiy** yuboriladi."
     ),
     request={"multipart/form-data": OrderStartSerializer},
     responses=OrderSerializer,

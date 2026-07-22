@@ -160,3 +160,16 @@ def test_master_inventory_use_invalid_order_does_not_decrease_inventory(master_a
 
     assert response.status_code == 404
     assert item.quantity == 5
+
+
+def test_master_inventory_list_hides_zero_quantity(master_api, master):
+    p1 = WarehouseProduct.objects.create(name="Filter", unit="dona", quantity=10, sale_price=15000)
+    p2 = WarehouseProduct.objects.create(name="Kran", unit="dona", quantity=10, sale_price=20000)
+    MasterInventory.objects.create(master=master, warehouse_product=p1, quantity=3, unit="dona")
+    MasterInventory.objects.create(master=master, warehouse_product=p2, quantity=0, unit="dona")
+
+    resp = master_api.get(reverse("master-inventory"))
+    assert resp.status_code == 200
+    names = [row["product_name"] for row in resp.data["results"]]
+    assert "Filter" in names
+    assert "Kran" not in names  # 0 dona -> yashirilgan

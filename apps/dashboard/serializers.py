@@ -728,6 +728,7 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
             "inventory_total",
             "bonus_used",
             "total_amount",
+            "before_photo",
             "completion_photo",
             "cancel_reason",
             "rejected_reason",
