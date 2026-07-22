@@ -21,9 +21,9 @@ TRACKING_STEPS = (
     {"order_status": OrderStatus.ACCEPTED, "key": "master_accepted", "label": "Usta qabul qildi"},
     {"order_status": OrderStatus.ON_WAY, "key": "master_on_way", "label": "Usta yo'lda"},
     {"order_status": OrderStatus.ARRIVED, "key": "master_arrived", "label": "Usta yetib keldi"},
-    # Master finished the work + sent the check (awaiting the client's payment).
-    {"order_status": OrderStatus.AWAITING_PAYMENT, "key": "master_finished", "label": "Usta ishni tugatgan"},
-    {"order_status": OrderStatus.COMPLETED, "key": "completed", "label": "Buyurtma yakunlandi"},
+    # Final step — the master finished the work. Covers both awaiting_payment (check sent,
+    # not yet paid) and completed (paid): fulfilment-wise the order is done in both.
+    {"order_status": OrderStatus.COMPLETED, "key": "master_finished", "label": "Usta ishni tugatgan"},
 )
 
 # Statuses where the master's submitted check is viewable/downloadable by the client.
@@ -41,8 +41,12 @@ def ensure_tracking(order):
 
 
 def tracking_state(order):
+    # awaiting_payment and completed share the single final step ("Usta ishni tugatgan"):
+    # fulfilment is done in both, payment is a separate action on that same step. So an
+    # order awaiting payment shows the last step (not a reset to the beginning).
+    status = OrderStatus.COMPLETED if order.status == OrderStatus.AWAITING_PAYMENT else order.status
     current_index = next(
-        (index for index, step in enumerate(TRACKING_STEPS) if step["order_status"] == order.status),
+        (index for index, step in enumerate(TRACKING_STEPS) if step["order_status"] == status),
         None,
     )
     if current_index is None:

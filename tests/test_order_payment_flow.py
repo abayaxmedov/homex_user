@@ -122,6 +122,20 @@ def test_awaiting_payment_stays_in_master_in_progress_tab(master_api, client_use
     assert str(order.id) in [o["id"] for o in completed2.data["results"]]
 
 
+def test_awaiting_payment_tracking_shows_final_step(client_api, client_user, service, master):
+    order = _order(
+        client_user, service, master=master, status=OrderStatus.AWAITING_PAYMENT,
+        service_fee=Decimal("100000"), total_amount=Decimal("100000"),
+    )
+    resp = client_api.get(reverse("client-order-track", args=[order.id]))
+    data = resp.data["data"]
+
+    # awaiting_payment sits on the single final step (completed + payment as one), not reset.
+    assert data["tracking_status"] == "master_finished"
+    assert data["tracking_step"] == data["tracking_total_steps"] == 5
+    assert all(step["is_completed"] for step in data["tracking_steps"])
+
+
 def test_arrived_is_pure_status_transition_no_photo(master_api, client_user, service, master):
     order = _order(client_user, service, master=master, status=OrderStatus.ON_WAY)
 
