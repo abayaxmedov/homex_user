@@ -76,7 +76,7 @@ Error response:
 | `new` | Yangi | Client buyurtma yaratgan; admin ustaga biriktiradi (`/dashboard/orders/{id}/assign/`). Hali usta qabul qilmagan. |
 | `accepted` | Qabul qilindi | Admin biriktirgan usta qabul qildi; birinchi qabul qilgan usta lead bo'ladi. |
 | `on_way` | Yo'lda | Usta `/master/orders/{id}/on-way/` orqali yo'lga chiqdi; location yuboradi. |
-| `arrived` | Yetib keldi | Usta `/master/orders/{id}/arrived/` (yoki `start/`) orqali manzilga yetib keldi; `before_photo` **majburiy**. |
+| `arrived` | Yetib keldi | Usta `/master/orders/{id}/arrived/` (yoki `start/`) orqali manzilga yetib keldi (body kerak emas). `before_photo` client order yaratishda yuklanadi. |
 | `completed` | Yakunlandi | Usta yakunladi; `completion_photo` optional, socket yopiladi va to'lov/check bosqichiga o'tadi. |
 | `cancelled` | Bekor qilingan | Client bekor qilgan. |
 | `rejected` | Rad etilgan | Master rad qilgan. |

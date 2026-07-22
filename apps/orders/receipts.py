@@ -103,53 +103,19 @@ def build_order_receipt_pdf(order, request=None):
 
 
 def receipt_rows(order, request=None):
-    rows = [
-        ("Check raqami", order_code(order)),
-        ("Order ID", order.id),
-        ("Status", order.get_status_display()),
+    # Only the fields the check PDF needs — nothing else.
+    return [
         ("Check tasdiqlangan vaqt", format_datetime(order.receipt_approved_at)),
-        ("Client", full_name(order.client)),
-        ("Client telefon", getattr(order.client, "phone", "")),
         ("Usta", full_name(order.master) if order.master else "-"),
         ("Usta telefon", getattr(order.master, "phone", "") if order.master else "-"),
         ("Xizmat", order.service.name),
         ("Kategoriya", getattr(order.service.category, "name", "")),
-        ("Manzil", order.address_text),
-        ("Latitude", order.lat),
-        ("Longitude", order.lng),
-        ("Rejalashtirilgan sana", order.scheduled_date),
-        ("Rejalashtirilgan vaqt", order.scheduled_time),
-        ("To'lov turi", order.get_payment_type_display()),
+        ("To'lov turi", order.get_payment_type_display() or "-"),
         ("Xizmat haqi", money(order.service_fee)),
         ("Ishlatilgan uskunalar jami", money(order.inventory_total)),
         ("Bonus ishlatilgan", money(order.bonus_used)),
         ("Jami summa", money(order.total_amount)),
-        ("Izoh", order.note or "-"),
-        ("Ishdan oldingi rasm", file_url(order.before_photo, request)),
-        ("Ishdan keyingi rasm", file_url(order.completion_photo, request)),
-        ("Yaratilgan vaqt", format_datetime(order.created_at)),
-        ("Yangilangan vaqt", format_datetime(order.updated_at)),
     ]
-
-    usages = list(order.inventory_usages.select_related("inventory__warehouse_product").all())
-    if usages:
-        rows.append(("Ishlatilgan uskunalar", ""))
-        for index, usage in enumerate(usages, start=1):
-            product_name = getattr(usage.inventory.warehouse_product, "name", str(usage.inventory))
-            rows.append(
-                (
-                    f"Uskuna {index}",
-                    f"{product_name}; miqdor: {usage.quantity}; birlik narx: {money(usage.unit_price)}; jami: {money(usage.total_price)}",
-                )
-            )
-    else:
-        rows.append(("Ishlatilgan uskunalar", "-"))
-
-    if order.cancel_reason:
-        rows.append(("Bekor qilish sababi", order.cancel_reason))
-    if order.rejected_reason:
-        rows.append(("Rad etish sababi", order.rejected_reason))
-    return rows
 
 
 def full_name(user):
