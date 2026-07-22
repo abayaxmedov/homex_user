@@ -11,6 +11,8 @@ class OrderStatus(models.TextChoices):
     ACCEPTED = "accepted", "Qabul qilindi"
     ON_WAY = "on_way", "Yo'lda"
     ARRIVED = "arrived", "Yetib keldi"
+    # Master submitted the check (price + used equipment); waiting for the client to pay.
+    AWAITING_PAYMENT = "awaiting_payment", "To'lov kutilmoqda"
     COMPLETED = "completed", "Yakunlandi"
     CANCELLED = "cancelled", "Bekor qilindi"
     REJECTED = "rejected", "Rad etildi"
@@ -46,6 +48,7 @@ STATUS_TAB = {
     OrderStatus.ACCEPTED: "bajarilmoqda",
     OrderStatus.ON_WAY: "yo'lda",
     OrderStatus.ARRIVED: "bajarilmoqda",
+    OrderStatus.AWAITING_PAYMENT: "bajarilmoqda",
     OrderStatus.COMPLETED: "yakunlangan",
     OrderStatus.CANCELLED: "bekor",
     OrderStatus.REJECTED: "bekor",
@@ -105,8 +108,11 @@ class Order(TimeStampedUUIDModel):
     scheduled_date = models.DateField()
     scheduled_time = models.TimeField()
     note = models.TextField(blank=True)
+    # Master's service comment entered when submitting the check ("Xizmat haqida izoh").
+    completion_note = models.TextField(blank=True)
     status = models.CharField(max_length=30, choices=OrderStatus.choices, default=OrderStatus.NEW)
-    payment_type = models.CharField(max_length=20, choices=PaymentType.choices, default=PaymentType.CASH)
+    # Not chosen at creation anymore — set when the client pays the check (cash/online).
+    payment_type = models.CharField(max_length=20, choices=PaymentType.choices, null=True, blank=True)
     service_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     inventory_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     bonus_used = models.DecimalField(max_digits=12, decimal_places=2, default=0)

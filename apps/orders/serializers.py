@@ -2,7 +2,7 @@ import json
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import Sum
 from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -17,12 +17,11 @@ class UploadImageField(serializers.ImageField):
 from apps.accounts.models import Master
 from apps.accounts.serializers import MasterSummarySerializer
 from apps.integrations.adapters import PaymentClient
-from apps.orders.models import Order, OrderInventoryUsage, OrderStatus, OrderTracking, PaymentType, Review, ReviewPhoto
+from apps.orders.models import Order, OrderInventoryUsage, OrderStatus, OrderTracking, Review, ReviewPhoto
 from apps.orders.receipts import order_receipt_filename
 from apps.orders.tracking import ensure_tracking, tracking_state
 from apps.profiles.models import ClientAddress, ClientDevice
 from apps.services.serializers import ServiceSerializer
-from apps.wallet.models import MasterWallet, WalletTransaction
 from apps.warehouse.models import MasterInventory
 
 
@@ -194,15 +193,12 @@ class OrderSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.BooleanField)
     def get_can_download_receipt(self, obj):
-        return obj.status == OrderStatus.COMPLETED and bool(obj.receipt_approved_at)
+        # Check is available once the master sends it (awaiting_payment) and after payment.
+        return obj.status in (OrderStatus.AWAITING_PAYMENT, OrderStatus.COMPLETED) and bool(obj.receipt_approved_at)
 
     @extend_schema_field(serializers.CharField)
     def get_receipt_status(self, obj):
-        if obj.receipt_approved_at:
-            return "approved"
-        if obj.status == OrderStatus.COMPLETED:
-            return "pending_master_confirmation"
-        return "not_ready"
+        return "approved" if obj.receipt_approved_at else "not_ready"
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_receipt_download_url(self, obj):
@@ -293,8 +289,8 @@ class OrderSerializer(serializers.ModelSerializer):
             key: validated_data.pop(key, None)
             for key in ("device_name", "device_model", "device_image", "device_location_label")
         }
-        service = validated_data["service"]
-        validated_data["service_fee"] = service.base_price
+        # service_fee is NOT taken from the service catalog anymore — the master enters
+        # it manually when submitting the check at job end. Order starts at 0.
         order = Order(**validated_data)
         order.recalculate_total()
         order.device = self._resolve_device(validated_data["client"], order, device, device_fields)
@@ -368,20 +364,27 @@ class OrderCompleteUsedItemSerializer(serializers.Serializer):
 
 
 class OrderCompleteSerializer(serializers.Serializer):
+    """Master submits the check at job end: manual service price + used equipment.
+
+    This does NOT complete the order — it moves it to ``awaiting_payment`` and makes the
+    check available to the client. The order completes (and the master's wallet is
+    credited) only after the client pays — see ``apps.orders.services.complete_paid_order``.
+    """
+
     service_fee = serializers.DecimalField(max_digits=12, decimal_places=2)
     completion_photo = UploadImageField(required=False)
+    comment = serializers.CharField(required=False, allow_blank=True, help_text="Xizmat haqida izoh.")
     used_items = JSONListField(child=OrderCompleteUsedItemSerializer(), required=False)
 
-    # Completing an order credits the master's wallet + deducts inventory, so it must
-    # run exactly once. Re-completing a finished/terminal order would double-credit the
-    # cash balance and double-deduct stock — block anything not in an active state.
+    # The check may be submitted only from an active handling state; re-submitting an
+    # order that already awaits payment / is completed would double-deduct stock.
     COMPLETABLE_STATUSES = (OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED)
 
     def validate(self, attrs):
         order = self.context["order"]
         if order.status not in self.COMPLETABLE_STATUSES:
-            if order.status == OrderStatus.COMPLETED:
-                raise serializers.ValidationError("Buyurtma allaqachon yakunlangan")
+            if order.status in (OrderStatus.AWAITING_PAYMENT, OrderStatus.COMPLETED):
+                raise serializers.ValidationError("Chek allaqachon yuborilgan")
             raise serializers.ValidationError(
                 "Buyurtmani bu holatda yakunlab bo'lmaydi (qabul qilingan / yo'lda / yetib kelgan bo'lishi kerak)"
             )
@@ -390,14 +393,15 @@ class OrderCompleteSerializer(serializers.Serializer):
     @transaction.atomic
     def save(self, **kwargs):
         # Lock the order row and re-check status inside the transaction so two
-        # concurrent complete requests can't both pass validate() and each credit
-        # the wallet (double-payment race). On Postgres this is a real row lock.
+        # concurrent submits can't both pass validate() and each deduct inventory.
         order = Order.objects.select_for_update().get(pk=self.context["order"].pk)
         if order.status not in self.COMPLETABLE_STATUSES:
-            raise serializers.ValidationError("Buyurtma allaqachon yakunlangan")
+            raise serializers.ValidationError("Chek allaqachon yuborilgan")
         order.service_fee = self.validated_data["service_fee"]
         if self.validated_data.get("completion_photo"):
             order.completion_photo = self.validated_data["completion_photo"]
+        if self.validated_data.get("comment"):
+            order.completion_note = self.validated_data["comment"]
         inventory_total = 0
         for item in self.validated_data.get("used_items", []):
             inventory = (
@@ -419,40 +423,14 @@ class OrderCompleteSerializer(serializers.Serializer):
             )
             inventory_total += usage.total_price
         order.inventory_total = order.inventory_usages.aggregate(total=Sum("total_price"))["total"] or inventory_total
-        order.status = OrderStatus.COMPLETED
-        if not order.receipt_approved_at:
-            order.receipt_approved_at = timezone.now()
-            order.receipt_approved_by = order.master
-        # Cash/card is collected in person at completion, so mark it paid here. Online
-        # stays driven by Payme (mark_order_paid), which fires on the real payment.
-        if order.payment_type != PaymentType.ONLINE and not order.is_paid:
-            order.is_paid = True
-            order.paid_at = timezone.now()
         order.recalculate_total()
+        # Send the check to the client (they can view + pay it now). The wallet is NOT
+        # credited here — only after payment (complete_paid_order). The status change
+        # fires the client "Chek tayyor" notification via the Order post_save signal.
+        order.status = OrderStatus.AWAITING_PAYMENT
+        order.receipt_approved_at = timezone.now()
+        order.receipt_approved_by = order.master
         order.save()
-        wallet, _ = MasterWallet.objects.get_or_create(master=order.master)
-        if order.payment_type == PaymentType.ONLINE:
-            payment_method = WalletTransaction.ONLINE
-            MasterWallet.objects.filter(pk=wallet.pk).update(
-                balance_online=F("balance_online") + order.total_amount,
-                total_earned=F("total_earned") + order.total_amount,
-                updated_at=timezone.now(),
-            )
-        else:
-            payment_method = WalletTransaction.CASH
-            MasterWallet.objects.filter(pk=wallet.pk).update(
-                balance_cash=F("balance_cash") + order.total_amount,
-                total_earned=F("total_earned") + order.total_amount,
-                updated_at=timezone.now(),
-            )
-        WalletTransaction.objects.create(
-            master=order.master,
-            transaction_type=WalletTransaction.IN,
-            amount=order.total_amount,
-            description=str(order.service),
-            payment_method=payment_method,
-            order=order,
-        )
         return order
 
 
@@ -470,7 +448,7 @@ class ReviewSerializer(serializers.ModelSerializer):
 
 class PaymentStartSerializer(serializers.Serializer):
     payment_method = serializers.ChoiceField(
-        choices=(("card", "Karta"), ("online", "Online"), ("plastic", "Plastik")),
+        choices=(("cash", "Naqd"), ("card", "Karta"), ("online", "Online"), ("plastic", "Plastik")),
         help_text="Payment start method: `card`, `online`, `plastic`.",
     )
     bonus_used = serializers.DecimalField(

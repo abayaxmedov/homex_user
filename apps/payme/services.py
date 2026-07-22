@@ -30,12 +30,23 @@ def order_amount_tiyin(order) -> int:
 # ---------------------------------------------------------------------------
 
 def mark_order_paid(order) -> None:
-    """Mark the order paid on a successful PerformTransaction. Idempotent."""
+    """Mark the order paid on a successful PerformTransaction. Idempotent.
+
+    New flow: the client pays the check while the order is ``awaiting_payment`` — a
+    successful online payment both marks it paid AND completes it, crediting the master
+    (online balance). See ``apps.orders.services.complete_paid_order``.
+    """
     if order.is_paid:
         return
-    order.is_paid = True
-    order.paid_at = timezone.now()
-    order.save(update_fields=["is_paid", "paid_at", "updated_at"])
+    # Local import avoids a circular import (orders.services -> wallet.services).
+    from apps.orders.models import PaymentType
+    from apps.orders.services import complete_paid_order
+
+    if not complete_paid_order(order, PaymentType.ONLINE):
+        # Fallback for any non-awaiting_payment edge — at least record the payment.
+        order.is_paid = True
+        order.paid_at = timezone.now()
+        order.save(update_fields=["is_paid", "paid_at", "updated_at"])
     logger.info("Payme: order %s marked paid", order.id)
 
 

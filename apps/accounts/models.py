@@ -16,6 +16,13 @@ class MasterApprovalStatus(models.TextChoices):
     REJECTED = "rejected", "Rad etilgan"
 
 
+class MasterLevel(models.TextChoices):
+    """Usta darajasi (dashboard 'Usta tahrirlash' formasidagi 'Daraja')."""
+
+    USTA = "usta", "Usta"
+    KATTA_USTA = "katta_usta", "Katta usta"
+
+
 class Client(TimeStampedUUIDModel):
     phone = models.CharField(max_length=20, unique=True)
     first_name = models.CharField(max_length=100, blank=True)
@@ -51,6 +58,9 @@ class Master(TimeStampedUUIDModel):
     last_name = models.CharField(max_length=100, blank=True)
     password = models.CharField(max_length=128, blank=True)
     specialization = models.CharField(max_length=120, blank=True)
+    # Dashboard "Usta tahrirlash" formasi: Daraja (level) va Manzil (address).
+    daraja = models.CharField(max_length=20, choices=MasterLevel.choices, blank=True)
+    address = models.CharField(max_length=300, blank=True)
     avatar = models.ImageField(upload_to="masters/avatars/", null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     approval_status = models.CharField(

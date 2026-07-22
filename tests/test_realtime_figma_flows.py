@@ -195,7 +195,7 @@ def test_notification_socket_receives_full_status_flow(master_api, master, clien
         on_way["payload"]["data"]["status"],
         arrived["payload"]["data"]["status"],
         completed["payload"]["data"]["status"],
-    ] == [OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED, OrderStatus.COMPLETED]
+    ] == [OrderStatus.ACCEPTED, OrderStatus.ON_WAY, OrderStatus.ARRIVED, OrderStatus.AWAITING_PAYMENT]
 
 
 def test_status_change_also_notifies_assigned_masters(master_api, master, client_user, service):

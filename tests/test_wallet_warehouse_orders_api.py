@@ -82,6 +82,25 @@ def test_master_and_client_order_api_flow(client_api, master_api, master, client
 
     list_response = master_api.get(reverse("master-orders"))
     accept_response = master_api.post(reverse("master-order-accept", args=[order.id]))
+
+    # Master submitted the check -> order awaits the client's payment.
+    from django.utils import timezone
+
+    order.refresh_from_db()
+    order.status = OrderStatus.AWAITING_PAYMENT
+    order.service_fee = 100000
+    order.total_amount = 100000
+    order.receipt_approved_at = timezone.now()
+    order.save(update_fields=["status", "service_fee", "total_amount", "receipt_approved_at"])
+
+    # Client starts an online payment (order stays awaiting_payment until Payme confirms).
+    pay_response = client_api.post(
+        reverse("client-order-pay", args=[order.id]),
+        {"payment_method": "online"},
+        format="json",
+    )
+
+    # Simulate payment confirmed -> completed, then the client can rate.
     order.refresh_from_db()
     order.status = OrderStatus.COMPLETED
     order.save(update_fields=["status"])
@@ -90,15 +109,10 @@ def test_master_and_client_order_api_flow(client_api, master_api, master, client
         {"rating": 5, "comment": "Zo'r"},
         format="json",
     )
-    pay_response = client_api.post(
-        reverse("client-order-pay", args=[order.id]),
-        {"payment_method": "online", "bonus_used": "0"},
-        format="json",
-    )
 
     assert order_response.status_code == 201
     assert list_response.status_code == 200
     assert accept_response.status_code == 200
-    assert rate_response.status_code == 201
     assert pay_response.status_code == 200
     assert "payment_url" in pay_response.data["data"]
+    assert rate_response.status_code == 201

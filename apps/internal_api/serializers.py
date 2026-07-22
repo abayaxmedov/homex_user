@@ -750,10 +750,11 @@ class InternalOrderWriteSerializer(serializers.Serializer):
         validated_data.setdefault("address_text", "")
         validated_data.setdefault("lat", Decimal("0"))
         validated_data.setdefault("lng", Decimal("0"))
-        validated_data.setdefault("payment_type", PaymentType.CASH)
         validated_data.setdefault("status", OrderStatus.NEW)
+        # service_fee comes from the master at check time, not the service catalog. An
+        # explicit `price` is still honoured (admin/express order); otherwise it stays 0.
         if price is None:
-            price = service.base_price if service else Decimal("0")
+            price = Decimal("0")
         validated_data.setdefault("service_fee", price)
         validated_data.setdefault("total_amount", price)
         order = Order.objects.create(**validated_data)
