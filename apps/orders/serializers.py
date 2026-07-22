@@ -448,7 +448,7 @@ class ReviewSerializer(serializers.ModelSerializer):
 
 class PaymentStartSerializer(serializers.Serializer):
     payment_method = serializers.ChoiceField(
-        choices=(("card", "Karta"), ("online", "Online"), ("plastic", "Plastik")),
+        choices=(("cash", "Naqd"), ("card", "Karta"), ("online", "Online"), ("plastic", "Plastik")),
         help_text="Payment start method: `card`, `online`, `plastic`.",
     )
     bonus_used = serializers.DecimalField(

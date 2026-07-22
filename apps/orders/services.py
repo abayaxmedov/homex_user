@@ -11,9 +11,9 @@ def complete_paid_order(order, payment_method):
     """Complete an order once the client has paid, crediting the master's wallet.
 
     This is the single place the wallet is credited — it runs at PAYMENT time (online
-    via Payme's mark_order_paid, or cash via the master's confirm-cash action), not when
-    the master submits the check. Idempotent: only acts on an ``awaiting_payment`` order,
-    so a duplicate Payme perform / double cash-confirm can't pay the master twice.
+    via Payme's mark_order_paid, or cash when the client picks "cash" on the check), not
+    when the master submits the check. Idempotent: only acts on an ``awaiting_payment``
+    order, so a duplicate Payme perform / repeated pay call can't pay the master twice.
 
     ``payment_method`` is a :class:`PaymentType` value (cash / online).
     Returns ``True`` if the order was completed by this call, ``False`` if it was a no-op.

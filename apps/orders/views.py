@@ -375,7 +375,7 @@ class MasterOrderRejectView(generics.GenericAPIView):
         "Usta ishni tugatib chekni yuboradi: `service_fee` (xizmat narxi, qo'lda), `used_items` (ishlatilgan "
         "uskunalar), `completion_photo` va `comment` (izoh). Order `awaiting_payment` holatiga o'tadi va mijozga "
         "check ochiladi. Order shu bosqichda YAKUNLANMAYDI va usta hamyoni kreditlanmaydi — bu mijoz to'lagandan "
-        "keyin bo'ladi (online: Payme; naqd: usta `confirm-cash` bilan tasdiqlaydi)."
+        "keyin bo'ladi (mijoz `POST /client/orders/<id>/pay/` orqali naqd yoki online tanlaydi)."
     ),
     request={"multipart/form-data": OrderCompleteSerializer},
     examples=[
@@ -409,32 +409,6 @@ class MasterOrderCompleteView(generics.GenericAPIView):
                 "wallet_balance": getattr(wallet, "balance_cash", 0) + getattr(wallet, "balance_online", 0),
             }
         )
-
-
-@extend_schema(
-    tags=["Master Orders"],
-    summary="Naqd to'lovni tasdiqlash",
-    description=(
-        "Mijoz naqd to'laganda usta 'Naqd qabul qildim' bosadi. Order yakunlanadi va usta naqd balansiga "
-        "summa tushadi. Faqat `awaiting_payment` (chek yuborilgan) holatida ishlaydi; idempotent."
-    ),
-    request=None,
-    responses=OrderSerializer,
-)
-class MasterOrderConfirmCashView(generics.GenericAPIView):
-    permission_classes = [IsMaster]
-    serializer_class = OrderSerializer
-
-    def post(self, request, pk):
-        order = get_object_or_404(Order, pk=pk, master=request.user)
-        if order.status != OrderStatus.AWAITING_PAYMENT:
-            raise ValidationError(
-                {"status": "Faqat chek yuborilgan (to'lov kutilmoqda) buyurtma uchun naqd tasdiqlanadi"}
-            )
-        complete_paid_order(order, PaymentType.CASH)
-        order.refresh_from_db()
-        # The client "Buyurtma yakunlandi" notification is fired by the Order post_save signal.
-        return success_response(OrderSerializer(order, context={"request": request}).data)
 
 
 @extend_schema(
@@ -848,7 +822,16 @@ class ClientOrderRateView(generics.GenericAPIView):
         return success_response(ReviewSerializer(review).data, status=201)
 
 
-@extend_schema(tags=["Client Orders"])
+@extend_schema(
+    tags=["Client Orders"],
+    summary="Chekni to'lash (naqd yoki online)",
+    description=(
+        "Mijoz ustaning chekini to'laydi (faqat `awaiting_payment` holatida). "
+        "`payment_method=cash` bo'lsa order **darrov yakunlanadi** (usta tasdig'i kerak emas) va usta "
+        "naqd balansiga tushadi — javobda yakunlangan order qaytadi. Aks holda (`online`/`card`/`plastic`) "
+        "Payme to'lovi boshlanadi va `{payment_url}` qaytadi; to'lov tasdiqlanganda order avtomatik yakunlanadi."
+    ),
+)
 class ClientOrderPayView(generics.GenericAPIView):
     permission_classes = [IsClient]
     serializer_class = PaymentStartSerializer
@@ -856,15 +839,23 @@ class ClientOrderPayView(generics.GenericAPIView):
     @transaction.atomic
     def post(self, request, pk):
         order = get_object_or_404(Order.objects.select_for_update(), pk=pk, client=request.user)
-        # Online payment happens only on the check the master sent (awaiting_payment).
+        # Payment happens only on the check the master sent (awaiting_payment).
         if order.status != OrderStatus.AWAITING_PAYMENT:
             raise ValidationError(
                 {"status": "To'lov faqat chek yuborilgandan keyin (to'lov kutilmoqda holatida) amalga oshiriladi"}
             )
         if order.is_paid:
             raise ValidationError({"status": "Buyurtma allaqachon to'langan"})
-        # The client is paying online — record the choice; a successful Payme perform
-        # then completes the order + credits the master (see mark_order_paid).
+
+        # Cash: the client pays in person — complete the order immediately (no master
+        # confirmation) and credit the master's cash balance.
+        if request.data.get("payment_method") == PaymentType.CASH:
+            complete_paid_order(order, PaymentType.CASH)
+            order.refresh_from_db()
+            return success_response(OrderSerializer(order, context={"request": request}).data)
+
+        # Online/card/plastic: start a Payme payment; a successful perform then
+        # completes the order + credits the master (see mark_order_paid).
         order.payment_type = PaymentType.ONLINE
         order.save(update_fields=["payment_type", "updated_at"])
         serializer = self.get_serializer(data=request.data, context={"order": order})

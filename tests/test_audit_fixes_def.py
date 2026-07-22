@@ -76,9 +76,9 @@ def test_touch_chat_increments_unread(db, client_user):
     assert chat.unread_by_admin == 2
 
 
-# --- New flow: submit check -> awaiting_payment (unpaid); cash confirm -> paid ---
+# --- New flow: submit check -> awaiting_payment (unpaid); client cash pay -> completed ---
 
-def test_check_submit_then_cash_confirm_marks_paid(master_api, client_user, service, master):
+def test_check_submit_then_client_cash_pay_completes(master_api, client_api, client_user, service, master):
     order = make_order(client_user, service, status=OrderStatus.ARRIVED, master=master)
 
     submit = master_api.post(
@@ -89,12 +89,20 @@ def test_check_submit_then_cash_confirm_marks_paid(master_api, client_user, serv
     assert order.status == OrderStatus.AWAITING_PAYMENT
     assert order.is_paid is False  # not paid until the client pays
 
-    confirm = master_api.post(reverse("master-order-confirm-cash", args=[order.id]))
-    assert confirm.status_code == 200
+    # Client picks cash -> order completes immediately (no master confirmation).
+    pay = client_api.post(
+        reverse("client-order-pay", args=[order.id]), {"payment_method": "cash"}, format="json"
+    )
+    assert pay.status_code == 200
     order.refresh_from_db()
     assert order.status == OrderStatus.COMPLETED
     assert order.is_paid is True
     assert order.paid_at is not None
+
+    from apps.wallet.models import MasterWallet
+
+    wallet = MasterWallet.objects.get(master=master)
+    assert wallet.balance_cash == 150000
 
 
 # --- F2: a market order isn't re-priced on later edits ---
