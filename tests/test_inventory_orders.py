@@ -53,14 +53,24 @@ def test_order_complete_updates_wallet_and_inventory(master, client_user, servic
     serializer.save()
     item.refresh_from_db()
     order.refresh_from_db()
-    wallet = MasterWallet.objects.get(master=master)
     usage = order.inventory_usages.get()
 
+    # Submitting the check deducts inventory + computes the total, but does NOT credit
+    # the wallet — the order awaits the client's payment.
     assert item.quantity == 3
     assert usage.unit_price == 15000
     assert usage.total_price == 30000
     assert order.inventory_total == 30000
     assert order.total_amount == 130000
+    assert order.status == OrderStatus.AWAITING_PAYMENT
+    assert not WalletTransaction.objects.filter(master=master, transaction_type=WalletTransaction.IN).exists()
+
+    # After payment the wallet is credited (online in this case).
+    from apps.orders.models import PaymentType as _PaymentType
+    from apps.orders.services import complete_paid_order
+
+    complete_paid_order(order, _PaymentType.ONLINE)
+    wallet = MasterWallet.objects.get(master=master)
     assert wallet.balance_online == 130000
     assert WalletTransaction.objects.filter(
         master=master,

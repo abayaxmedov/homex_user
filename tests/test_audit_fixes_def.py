@@ -76,15 +76,23 @@ def test_touch_chat_increments_unread(db, client_user):
     assert chat.unread_by_admin == 2
 
 
-# --- F1: cash completion marks the order paid ---
+# --- New flow: submit check -> awaiting_payment (unpaid); cash confirm -> paid ---
 
-def test_cash_completion_marks_order_paid(master_api, client_user, service, master):
-    order = make_order(client_user, service, status=OrderStatus.ARRIVED, master=master, payment_type=PaymentType.CASH)
-    resp = master_api.post(
+def test_check_submit_then_cash_confirm_marks_paid(master_api, client_user, service, master):
+    order = make_order(client_user, service, status=OrderStatus.ARRIVED, master=master)
+
+    submit = master_api.post(
         reverse("master-order-complete", args=[order.id]), {"service_fee": "150000"}, format="multipart"
     )
-    assert resp.status_code == 200
+    assert submit.status_code == 200
     order.refresh_from_db()
+    assert order.status == OrderStatus.AWAITING_PAYMENT
+    assert order.is_paid is False  # not paid until the client pays
+
+    confirm = master_api.post(reverse("master-order-confirm-cash", args=[order.id]))
+    assert confirm.status_code == 200
+    order.refresh_from_db()
+    assert order.status == OrderStatus.COMPLETED
     assert order.is_paid is True
     assert order.paid_at is not None
 

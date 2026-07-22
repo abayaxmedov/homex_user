@@ -492,6 +492,8 @@ class DashboardMasterSerializer(serializers.ModelSerializer):
             "last_name",
             "full_name",
             "specialization",
+            "daraja",
+            "address",
             "avatar",
             "rating",
             "status",
@@ -836,8 +838,8 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        if "service_fee" not in validated_data:
-            validated_data["service_fee"] = validated_data["service"].base_price
+        # service_fee is entered by the master at check time, not taken from the service
+        # catalog. An admin may still pass service_fee explicitly; otherwise it stays 0.
         order = Order(**validated_data)
         order.recalculate_total()
         order.save()

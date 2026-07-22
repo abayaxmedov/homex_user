@@ -12,6 +12,7 @@ urlpatterns = [
     path("<uuid:pk>/start/", views.MasterOrderStartView.as_view(), name="master-order-start"),
     path("<uuid:pk>/reject/", views.MasterOrderRejectView.as_view(), name="master-order-reject"),
     path("<uuid:pk>/complete/", views.MasterOrderCompleteView.as_view(), name="master-order-complete"),
+    path("<uuid:pk>/confirm-cash/", views.MasterOrderConfirmCashView.as_view(), name="master-order-confirm-cash"),
     path("<uuid:pk>/receipt/confirm/", views.MasterOrderReceiptConfirmView.as_view(), name="master-order-receipt-confirm"),
     path("<uuid:pk>/track/", views.MasterOrderTrackView.as_view(), name="master-order-track"),
 ]

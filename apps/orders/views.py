@@ -20,8 +20,9 @@ from apps.common.responses import success_response
 from apps.common.views import EnvelopeMixin
 from apps.notifications.models import Notification
 from apps.notifications.services import create_notification
-from apps.orders.models import ACTIVE_ORDER_STATUSES, HomeBanner, Order, OrderMaster, OrderStatus, Review
+from apps.orders.models import ACTIVE_ORDER_STATUSES, HomeBanner, Order, OrderMaster, OrderStatus, PaymentType, Review
 from apps.orders.receipts import PDF_CONTENT_TYPE, build_order_receipt_pdf, order_receipt_filename
+from apps.orders.services import complete_paid_order
 from apps.orders.serializers import (
     MasterLocationSerializer,
     MapConfigSerializer,
@@ -369,12 +370,12 @@ class MasterOrderRejectView(generics.GenericAPIView):
 
 @extend_schema(
     tags=["Master Orders"],
-    summary="Orderni yakunlash",
+    summary="Chekni yuborish (ishni tugatish)",
     description=(
-        "Master bajarilgan orderni yakunlaydi. Multipart request ishlatiladi: `completion_photo` optional. "
-        "`payment_type` client order yaratganda tanlagan qiymatdan olinadi. `used_items` inventory ishlatilgan bo'lsa "
-        "JSON string/list sifatida yuboriladi. Yakunlanganda order total, wallet transaction va client notification "
-        "yangilanadi."
+        "Usta ishni tugatib chekni yuboradi: `service_fee` (xizmat narxi, qo'lda), `used_items` (ishlatilgan "
+        "uskunalar), `completion_photo` va `comment` (izoh). Order `awaiting_payment` holatiga o'tadi va mijozga "
+        "check ochiladi. Order shu bosqichda YAKUNLANMAYDI va usta hamyoni kreditlanmaydi — bu mijoz to'lagandan "
+        "keyin bo'ladi (online: Payme; naqd: usta `confirm-cash` bilan tasdiqlaydi)."
     ),
     request={"multipart/form-data": OrderCompleteSerializer},
     examples=[
@@ -398,7 +399,7 @@ class MasterOrderCompleteView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         order = serializer.save()
         wallet = getattr(request.user, "wallet", None)
-        # The client status notification is fired centrally by the Order post_save signal.
+        # The client "Chek tayyor" notification is fired centrally by the Order post_save signal.
         return success_response(
             {
                 "order": OrderSerializer(order, context={"request": request}).data,
@@ -408,6 +409,32 @@ class MasterOrderCompleteView(generics.GenericAPIView):
                 "wallet_balance": getattr(wallet, "balance_cash", 0) + getattr(wallet, "balance_online", 0),
             }
         )
+
+
+@extend_schema(
+    tags=["Master Orders"],
+    summary="Naqd to'lovni tasdiqlash",
+    description=(
+        "Mijoz naqd to'laganda usta 'Naqd qabul qildim' bosadi. Order yakunlanadi va usta naqd balansiga "
+        "summa tushadi. Faqat `awaiting_payment` (chek yuborilgan) holatida ishlaydi; idempotent."
+    ),
+    request=None,
+    responses=OrderSerializer,
+)
+class MasterOrderConfirmCashView(generics.GenericAPIView):
+    permission_classes = [IsMaster]
+    serializer_class = OrderSerializer
+
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk, master=request.user)
+        if order.status != OrderStatus.AWAITING_PAYMENT:
+            raise ValidationError(
+                {"status": "Faqat chek yuborilgan (to'lov kutilmoqda) buyurtma uchun naqd tasdiqlanadi"}
+            )
+        complete_paid_order(order, PaymentType.CASH)
+        order.refresh_from_db()
+        # The client "Buyurtma yakunlandi" notification is fired by the Order post_save signal.
+        return success_response(OrderSerializer(order, context={"request": request}).data)
 
 
 @extend_schema(
@@ -787,8 +814,8 @@ class ClientOrderReceiptDownloadView(generics.GenericAPIView):
             pk=pk,
             client=request.user,
         )
-        if order.status != OrderStatus.COMPLETED or not order.receipt_approved_at:
-            raise PermissionDenied("Check hali usta tomonidan tasdiqlanmagan")
+        if order.status not in (OrderStatus.AWAITING_PAYMENT, OrderStatus.COMPLETED) or not order.receipt_approved_at:
+            raise PermissionDenied("Check hali usta tomonidan yuborilmagan")
 
         content = build_order_receipt_pdf(order, request=request)
         response = HttpResponse(content, content_type=PDF_CONTENT_TYPE)
@@ -829,12 +856,17 @@ class ClientOrderPayView(generics.GenericAPIView):
     @transaction.atomic
     def post(self, request, pk):
         order = get_object_or_404(Order.objects.select_for_update(), pk=pk, client=request.user)
-        # Can't (re)start payment on a terminal or already-paid order — that would
-        # rewrite bonus_used/total_amount and re-trigger the external payment call.
-        if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED):
-            raise ValidationError({"status": "Bekor qilingan yoki rad etilgan buyurtma uchun to'lov qilinmaydi"})
+        # Online payment happens only on the check the master sent (awaiting_payment).
+        if order.status != OrderStatus.AWAITING_PAYMENT:
+            raise ValidationError(
+                {"status": "To'lov faqat chek yuborilgandan keyin (to'lov kutilmoqda holatida) amalga oshiriladi"}
+            )
         if order.is_paid:
             raise ValidationError({"status": "Buyurtma allaqachon to'langan"})
+        # The client is paying online — record the choice; a successful Payme perform
+        # then completes the order + credits the master (see mark_order_paid).
+        order.payment_type = PaymentType.ONLINE
+        order.save(update_fields=["payment_type", "updated_at"])
         serializer = self.get_serializer(data=request.data, context={"order": order})
         serializer.is_valid(raise_exception=True)
         payment = serializer.save()

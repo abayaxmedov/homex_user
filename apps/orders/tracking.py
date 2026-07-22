@@ -21,8 +21,13 @@ TRACKING_STEPS = (
     {"order_status": OrderStatus.ACCEPTED, "key": "master_accepted", "label": "Usta qabul qildi"},
     {"order_status": OrderStatus.ON_WAY, "key": "master_on_way", "label": "Usta yo'lda"},
     {"order_status": OrderStatus.ARRIVED, "key": "master_arrived", "label": "Usta yetib keldi"},
-    {"order_status": OrderStatus.COMPLETED, "key": "master_finished", "label": "Usta ishni tugatgan"},
+    # Master finished the work + sent the check (awaiting the client's payment).
+    {"order_status": OrderStatus.AWAITING_PAYMENT, "key": "master_finished", "label": "Usta ishni tugatgan"},
+    {"order_status": OrderStatus.COMPLETED, "key": "completed", "label": "Buyurtma yakunlandi"},
 )
+
+# Statuses where the master's submitted check is viewable/downloadable by the client.
+RECEIPT_READY_STATUSES = (OrderStatus.AWAITING_PAYMENT, OrderStatus.COMPLETED)
 
 TERMINAL_STATUS_LABELS = {
     OrderStatus.CANCELLED: ("cancelled", "Buyurtma bekor qilingan"),
@@ -74,11 +79,7 @@ def _file_url(file_field):
 
 
 def _receipt_status(order):
-    if order.receipt_approved_at:
-        return "approved"
-    if order.status == OrderStatus.COMPLETED:
-        return "pending_master_confirmation"
-    return "not_ready"
+    return "approved" if order.receipt_approved_at else "not_ready"
 
 
 def tracking_payload(order):
@@ -103,9 +104,9 @@ def tracking_payload(order):
         "before_photo": _file_url(order.before_photo),
         "completion_photo": _file_url(order.completion_photo),
         "receipt_status": _receipt_status(order),
-        "receipt_available": order.status == OrderStatus.COMPLETED and bool(order.receipt_approved_at),
+        "receipt_available": order.status in RECEIPT_READY_STATUSES and bool(order.receipt_approved_at),
         "receipt_download_url": f"/api/v1/client/orders/{order.id}/receipt/download/"
-        if order.status == OrderStatus.COMPLETED and order.receipt_approved_at
+        if order.status in RECEIPT_READY_STATUSES and order.receipt_approved_at
         else None,
         "order_location": {"lat": order.lat, "lng": order.lng, "address": order.address_text},
         "master": MasterSummarySerializer(master).data if master else None,

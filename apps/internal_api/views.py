@@ -934,8 +934,8 @@ class OrderReceiptDownloadAPIView(InternalAPIViewMixin, APIView):
             ),
             pk=pk,
         )
-        if order.status != OrderStatus.COMPLETED or not order.receipt_approved_at:
-            raise PermissionDenied("Check hali usta tomonidan tasdiqlanmagan")
+        if order.status not in (OrderStatus.AWAITING_PAYMENT, OrderStatus.COMPLETED) or not order.receipt_approved_at:
+            raise PermissionDenied("Check hali usta tomonidan yuborilmagan")
 
         response = HttpResponse(build_order_receipt_pdf(order, request=request), content_type=PDF_CONTENT_TYPE)
         response["Content-Disposition"] = f'attachment; filename="{order_receipt_filename(order)}"'
