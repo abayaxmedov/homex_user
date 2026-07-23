@@ -302,6 +302,7 @@ class DashboardClientSerializer(serializers.ModelSerializer):
         help_text="Dashboard update uchun tariff ID.",
     )
     addresses_count = serializers.SerializerMethodField(help_text="Clientga tegishli manzillar soni.")
+    address = serializers.SerializerMethodField(help_text="Mijozning asosiy (default) manzili matni; manzil bo'lmasa null.")
     last_order_date = serializers.SerializerMethodField(help_text="Clientning oxirgi order created_at sanasi.")
     # Computed live: the stored Client.total_spent/total_orders are never maintained,
     # so read them from the orders instead of returning stale zeros. Same field names
@@ -325,6 +326,7 @@ class DashboardClientSerializer(serializers.ModelSerializer):
             "current_tariff_id",
             "tariff_expires_at",
             "addresses_count",
+            "address",
             "total_spent",
             "total_orders",
             "is_active",
@@ -337,6 +339,7 @@ class DashboardClientSerializer(serializers.ModelSerializer):
             "full_name",
             "current_tariff",
             "addresses_count",
+            "address",
             "total_spent",
             "total_orders",
             "last_order_date",
@@ -355,6 +358,16 @@ class DashboardClientSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.IntegerField)
     def get_addresses_count(self, obj):
         return getattr(obj, "addresses_count", obj.addresses.count())
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_address(self, obj):
+        # Prefer the client's default address; fall back to the first one. Uses the
+        # prefetched ``addresses`` (ordered -is_default, label) so no extra query per row.
+        addresses = list(obj.addresses.all())
+        if not addresses:
+            return None
+        primary = next((a for a in addresses if a.is_default), addresses[0])
+        return primary.address_text
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True))
     def get_last_order_date(self, obj):

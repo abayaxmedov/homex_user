@@ -497,7 +497,11 @@ class DashboardClientListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, 
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Client.objects.none()
-        queryset = Client.objects.select_related("current_tariff").annotate(addresses_count=Count("addresses", distinct=True))
+        queryset = (
+            Client.objects.select_related("current_tariff")
+            .prefetch_related("addresses")
+            .annotate(addresses_count=Count("addresses", distinct=True))
+        )
         search = self.request.query_params.get("search")
         is_active = bool_param(self.request.query_params.get("is_active"))
         if search:
@@ -514,7 +518,7 @@ class DashboardClientListCreateAPIView(DashboardPermissionMixin, EnvelopeMixin, 
 )
 class DashboardClientDetailAPIView(DashboardPermissionMixin, EnvelopeMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DashboardClientSerializer
-    queryset = Client.objects.select_related("current_tariff").all()
+    queryset = Client.objects.select_related("current_tariff").prefetch_related("addresses").all()
 
 
 @extend_schema(
