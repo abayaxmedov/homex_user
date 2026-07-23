@@ -606,6 +606,7 @@ class InternalOrderSerializer(serializers.ModelSerializer):
             "lat",
             "lng",
             "note",
+            "completion_note",
             "time",
             "before_photo",
             "completion_photo",

@@ -730,6 +730,7 @@ class DashboardOrderSerializer(serializers.ModelSerializer):
             "total_amount",
             "before_photo",
             "completion_photo",
+            "completion_note",
             "cancel_reason",
             "rejected_reason",
             "tracking",

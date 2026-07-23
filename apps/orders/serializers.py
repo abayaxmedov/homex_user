@@ -131,6 +131,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "scheduled_date",
             "scheduled_time",
             "note",
+            "completion_note",
             "status",
             "status_label",
             "tracking_status",
@@ -171,6 +172,9 @@ class OrderSerializer(serializers.ModelSerializer):
             # so a client must not be able to discount their own total. Input is ignored.
             "bonus_used",
             "total_amount",
+            # completion_note is the master's "Xizmat haqida izoh" — set at check submission,
+            # read-only for the client.
+            "completion_note",
             "completion_photo",
             "receipt_approved_at",
             "created_at",
