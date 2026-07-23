@@ -156,3 +156,30 @@ def test_dashboard_client_total_spent_is_live(admin_api, client_user, service):
     assert resp.status_code == 200
     assert Decimal(resp.data["data"]["total_spent"]) == Decimal("500000.00")
     assert resp.data["data"]["total_orders"] == 3
+
+
+def test_dashboard_client_list_exposes_default_address(admin_api, client_user):
+    from apps.profiles.models import ClientAddress
+
+    ClientAddress.objects.create(
+        client=client_user, label="Ish", address_text="Chilonzor 5",
+        lat="41.30000000", lng="69.25000000", is_default=False,
+    )
+    ClientAddress.objects.create(
+        client=client_user, label="Uy", address_text="Yunusobod 12",
+        lat="41.36000000", lng="69.28000000", is_default=True,
+    )
+
+    resp = admin_api.get(reverse("dashboard-clients"))
+    assert resp.status_code == 200
+    row = next(c for c in resp.data["results"] if c["id"] == str(client_user.id))
+    # Default manzil ustuvor (Ish emas, Uy), soni ham to'g'ri.
+    assert row["address"] == "Yunusobod 12"
+    assert row["addresses_count"] == 2
+
+
+def test_dashboard_client_address_is_null_when_no_address(admin_api, client_user):
+    resp = admin_api.get(reverse("dashboard-clients"))
+    assert resp.status_code == 200
+    row = next(c for c in resp.data["results"] if c["id"] == str(client_user.id))
+    assert row["address"] is None
