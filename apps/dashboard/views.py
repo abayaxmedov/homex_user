@@ -1744,7 +1744,11 @@ class DashboardMasterInventoryListCreateAPIView(DashboardPermissionMixin, Envelo
     serializer_class = DashboardMasterInventorySerializer
 
     def get_queryset(self):
-        queryset = MasterInventory.objects.select_related("master", "warehouse_product")
+        # Only rows with stock left. A used-in-orders item can't be hard-deleted
+        # (OrderInventoryUsage PROTECT) so return_inventory_to_warehouse zeroes it out;
+        # this filter hides those soft-removed rows here too — mirroring the master app
+        # list — so a delete actually disappears from the dashboard instead of lingering at 0.
+        queryset = MasterInventory.objects.filter(quantity__gt=0).select_related("master", "warehouse_product")
         master = self.request.query_params.get("master")
         product = self.request.query_params.get("product")
         low_stock = bool_param(self.request.query_params.get("low_stock"))
