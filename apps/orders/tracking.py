@@ -107,6 +107,7 @@ def tracking_payload(order):
         "tracking_steps": state["steps"],
         "before_photo": _file_url(order.before_photo),
         "completion_photo": _file_url(order.completion_photo),
+        "completion_note": order.completion_note,
         "receipt_status": _receipt_status(order),
         "receipt_available": order.status in RECEIPT_READY_STATUSES and bool(order.receipt_approved_at),
         "receipt_download_url": f"/api/v1/client/orders/{order.id}/receipt/download/"

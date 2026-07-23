@@ -136,6 +136,24 @@ def test_awaiting_payment_tracking_shows_final_step(client_api, client_user, ser
     assert all(step["is_completed"] for step in data["tracking_steps"])
 
 
+def test_master_comment_reaches_client(master_api, client_api, client_user, service, master):
+    order = _order(client_user, service, master=master, status=OrderStatus.ARRIVED)
+
+    # Master submits the check with a comment ("Xizmat haqida izoh").
+    submit = master_api.post(
+        reverse("master-order-complete", args=[order.id]),
+        {"service_fee": "150000", "comment": "Kompressor tozalandi, freon to'ldirildi"},
+        format="multipart",
+    )
+    assert submit.status_code == 200
+
+    # Client sees the comment on the order detail (+ tracking).
+    detail = client_api.get(reverse("client-order-detail", args=[order.id]))
+    assert detail.data["data"]["completion_note"] == "Kompressor tozalandi, freon to'ldirildi"
+    track = client_api.get(reverse("client-order-track", args=[order.id]))
+    assert track.data["data"]["completion_note"] == "Kompressor tozalandi, freon to'ldirildi"
+
+
 def test_arrived_is_pure_status_transition_no_photo(master_api, client_user, service, master):
     order = _order(client_user, service, master=master, status=OrderStatus.ON_WAY)
 
